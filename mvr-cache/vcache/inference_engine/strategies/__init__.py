@@ -2,7 +2,11 @@ from .benchmark import BenchmarkInferenceEngine
 from .lang_chain import LangChainInferenceEngine
 from .open_ai import OpenAIInferenceEngine
 from .silicon_flow import SiliconFlowInferenceEngine
-from .vllm import VLLMInferenceEngine
+
+try:
+    from .vllm import VLLMInferenceEngine
+except ImportError:
+    VLLMInferenceEngine = None
 
 __all__ = [
     "BenchmarkInferenceEngine",

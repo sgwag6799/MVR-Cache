@@ -1179,6 +1179,9 @@ if __name__ == '__main__':
     trainer = RL4COTrainer(
         max_epochs=MAX_EPOCHS,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        # RL4CO defaults to "16-mixed", which becomes bf16 autocast on CPU and breaks the
+        # float32 log-prob buffers in the pointer policy. Use full precision on CPU.
+        precision="16-mixed" if torch.cuda.is_available() else "32-true",
         # Multi-GPU: set --devices > 1 (Lightning will launch DDP).
         # If using torchrun, pass --devices=1 and rely on LOCAL_RANK in each process.
         devices=_trainer_devices,

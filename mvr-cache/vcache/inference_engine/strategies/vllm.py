@@ -3,7 +3,13 @@ import os
 from typing import Any, Dict, List, Optional
 
 import torch
-from vllm import LLM, RequestOutput, SamplingParams
+
+try:
+    from vllm import LLM, RequestOutput, SamplingParams
+except ImportError:
+    LLM = None
+    RequestOutput = None
+    SamplingParams = None
 
 from vcache.inference_engine.inference_engine import InferenceEngine
 
