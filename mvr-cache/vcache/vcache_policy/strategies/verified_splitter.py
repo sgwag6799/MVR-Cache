@@ -216,6 +216,8 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
 
         self.executor: Optional[ThreadPoolExecutor] = None
         self.callback_queue: Optional[CallbackQueue] = None
+        # Set by process_request: the similarity score and fit behind the latest decision.
+        self.last_decision: Optional[dict] = None
 
         # RL splitter instance (expected: vcache.vcache_core.splitter.MaxSimSplitter.MaxSimSplitter)
         self.splitter = splitter
@@ -279,12 +281,26 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             except Exception:
                 pass
 
+    def _score_tensors(self, query_tensor, corpus_tensor) -> float:
+        """MaxSim with per-row weights when the splitter provides them (uniform otherwise)."""
+        weights_fn = getattr(self.splitter, "segment_weights", None)
+        if weights_fn is None:
+            return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        return self._maxsim_from_tensors(
+            query_tensor,
+            corpus_tensor,
+            query_weights=weights_fn(query_tensor),
+            corpus_weights=weights_fn(corpus_tensor),
+        )
+
     @staticmethod
-    def _maxsim_from_tensors(query_tensor, corpus_tensor) -> float:
+    def _maxsim_from_tensors(query_tensor, corpus_tensor, query_weights=None, corpus_weights=None) -> float:
         """
         Compute symmetric MaxSim similarity and return it in **[0, 1]** given:
           - query_tensor:  [S_q, H] (segment embeddings)
           - corpus_tensor: [S_c, H] (segment embeddings)
+          - query_weights / corpus_weights: optional non-negative per-row weights [S_q] / [S_c];
+            uniform when omitted. Scores are weighted means, so the result stays in [0, 1].
         """
         import torch
         import torch.nn.functional as F
@@ -304,9 +320,13 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             max_cos_sim_row = torch.max(cos, dim=1).values  # [Q]
             max_cos_sim_col = torch.max(cos, dim=0).values  # [C]
 
-            # Weighted version (training-style). No per-segment weights available here, so use uniform.
-            query_weights = torch.ones(max_cos_sim_row.shape[0], device=dev, dtype=torch.float32)
-            corpus_weights = torch.ones(max_cos_sim_col.shape[0], device=dev, dtype=torch.float32)
+            # Weighted version (training-style); uniform unless the caller supplies weights.
+            if query_weights is None:
+                query_weights = torch.ones(max_cos_sim_row.shape[0], device=dev, dtype=torch.float32)
+            if corpus_weights is None:
+                corpus_weights = torch.ones(max_cos_sim_col.shape[0], device=dev, dtype=torch.float32)
+            query_weights = query_weights.to(device=dev, dtype=torch.float32)
+            corpus_weights = corpus_weights.to(device=dev, dtype=torch.float32)
             row_score = torch.sum(max_cos_sim_row * query_weights) / (torch.sum(query_weights) + 1e-8)
             col_score = torch.sum(max_cos_sim_col * corpus_weights) / (torch.sum(corpus_weights) + 1e-8)
         else:
@@ -458,13 +478,13 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors(
                 query, candidate
             )
-            return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+            return self._score_tensors(query_tensor, corpus_tensor)
 
         # Mixed mode: compute MaxSim + cosine(full_embed_no_cls)
         qenc = self.splitter.encode_text(query)
         cenc = self.splitter.encode_text(candidate)
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(qenc, cenc)
-        maxsim01 = self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         fullcos01 = self._cos01(qenc["pooled_no_cls"], cenc["pooled_no_cls"])
         return 0.5 * (float(maxsim01) + float(fullcos01))
 
@@ -490,7 +510,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             pass
 
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(query_enc, cand_enc)
-        maxsim01 = self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         if not bool(getattr(self, "mix_fullcos", False)):
             return float(maxsim01)
         fullcos01 = self._cos01(query_enc["pooled_no_cls"], cand_enc["pooled_no_cls"])
@@ -573,11 +593,24 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             prompt, query_enc, query_knn_emb_cpu
         )
         if nn_metadata is None or similarity_score is None:
+            self.last_decision = None
             response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
             self.__cache_add(prompt=prompt, response=response, id_set=id_set)
             return False, response, EmbeddingMetadataObj(embedding_id=-1, response="")
 
+        n_obs_before = len(nn_metadata.observations)
         action = self.bayesian.select_action(similarity_score=similarity_score, metadata=nn_metadata)
+        # Snapshot of what the verified policy saw for this request (read by the eval script
+        # when --log-scores is set). t_hat/gamma are the fit used for this decision; they stay
+        # None while the entry has too few observations and the policy always explores.
+        self.last_decision = {
+            "s": float(similarity_score),
+            "embedding_id": int(nn_metadata.embedding_id),
+            "action": action.value,
+            "n_obs": n_obs_before,
+            "t_hat": None if nn_metadata.t_hat is None else float(nn_metadata.t_hat),
+            "gamma": None if nn_metadata.gamma is None else float(nn_metadata.gamma),
+        }
 
         match action:
             case _Action.EXPLOIT:
@@ -687,7 +720,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                             s = self._maxsim_similarity_from_encoded(query_enc, cached_prompt)
                     else:
                         with self._time_block("maxsim.score_tensors"):
-                            s = self._maxsim_from_tensors(query_tensor, cand_tensor)
+                            s = self._score_tensors(query_tensor, cand_tensor)
                 else:
                     with self._time_block("maxsim.score_pair"):
                         s = self._maxsim_similarity_from_encoded(query_enc, cached_prompt)

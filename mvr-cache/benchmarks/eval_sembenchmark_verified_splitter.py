@@ -8,6 +8,8 @@ and then the verified Bayesian explore/exploit logic.
 Notes:
 - The vector DB candidate selection uses the same BGE embedding model as the MaxSim splitter (via BGEEmbeddingEngine).
 - The MaxSim splitter requires a checkpoint; pass it via `--splitter-checkpoint`.
+- `--splitter-mode rule` swaps in a checkpoint-free punctuation splitter (RulePunctuationSplitter)
+  so only the segmentation changes while scoring, retrieval and the cache policy stay the same.
 
 Usage (example):
   export HF_TOKEN=hf_...                  # optional but recommended to avoid rate limits
@@ -89,6 +91,7 @@ from vcache.vcache_core.similarity_evaluator.strategies.string_comparison import
 )
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 from vcache.vcache_core.splitter.MaxSimSplitter import MaxSimSplitter
+from vcache.vcache_core.splitter.RuleSplitter import RulePunctuationSplitter, SegmentRowWeighter
 from vcache.inference_engine.strategies.benchmark import BenchmarkInferenceEngine
 from vcache.vcache_policy.strategies.verified_splitter import VerifiedSplitterDecisionPolicy
 
@@ -256,9 +259,27 @@ def main() -> None:
     )
     parser.add_argument("--max-capacity", type=int, default=200_000)
     parser.add_argument(
+        "--splitter-mode",
+        choices=["rl", "rule"],
+        default="rl",
+        help="'rl' uses the trained MaxSimSplitter checkpoint; 'rule' splits at punctuation "
+        "(same split characters as the RL policy, capped at --splitter-max-segments boundaries).",
+    )
+    parser.add_argument(
+        "--segment-weighting",
+        choices=["uniform", "length", "idf", "centroid", "mlp"],
+        default="uniform",
+        help="Per-segment MaxSim weights for --splitter-mode rule (see RuleSplitter.py).",
+    )
+    parser.add_argument(
+        "--segment-weight-stats",
+        default=None,
+        help="Stats file from benchmarks/build_segment_weight_stats.py (needed for idf/centroid/mlp).",
+    )
+    parser.add_argument(
         "--splitter-checkpoint",
-        required=True,
-        help="MaxSimSplitter checkpoint file or directory (auto-picks latest ckpt).",
+        default=None,
+        help="MaxSimSplitter checkpoint file or directory (auto-picks latest ckpt). Required for --splitter-mode rl.",
     )
     parser.add_argument(
         "--splitter-device",
@@ -362,12 +383,31 @@ def main() -> None:
         help="Timestamp string used in results_<timestamp>.json when --benchmark-output-dir is set. Default matches benchmark.py format: YYYY-MM-DD_HH-MM",
     )
     parser.add_argument(
+        "--log-scores",
+        type=str,
+        default=None,
+        help=(
+            "If set, write one JSONL record per sample with the similarity score s passed to "
+            "the verified policy, the candidate's correctness c, the action and the entry's fit "
+            "(t_hat, gamma, n_obs). For each entry's full (s, c) history use --dump-observations."
+        ),
+    )
+    parser.add_argument(
         "--save-cache-hit-samples",
         type=str,
         default=None,
         help=(
             "If set, write ALL cache-hit samples to this path as JSONL (one record per hit). "
             "If you pass a directory, it will create one file per (delta,candidate_k) run."
+        ),
+    )
+    parser.add_argument(
+        "--dump-observations",
+        type=str,
+        default=None,
+        help=(
+            "If set, write every (similarity, label) observation the verified policy collected "
+            "(per cached entry, excluding the two prior points) to this JSON file after the run."
         ),
     )
     parser.add_argument(
@@ -499,14 +539,42 @@ def main() -> None:
 
     shared_embedder = EmbeddingModel(device=args.splitter_device)
     embedding_engine = BGEEmbeddingEngine(embedding_model=shared_embedder)
-    splitter = MaxSimSplitter(
-        checkpoint_path=args.splitter_checkpoint,
-        device=args.splitter_device,
-        embedding_model=shared_embedder,
-        max_segments=int(args.splitter_max_segments),
-        overlap_tokens=int(args.splitter_overlap_tokens),
-        include_full_embedding=bool(args.include_full_embedding),
-    )
+    if args.splitter_mode == "rule":
+        weight_stats = None
+        if args.segment_weighting in ("idf", "centroid", "mlp"):
+            if not args.segment_weight_stats:
+                parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
+            weight_stats = torch.load(args.segment_weight_stats, map_location="cpu", weights_only=False)
+        splitter = RulePunctuationSplitter(
+            device=args.splitter_device,
+            embedding_model=shared_embedder,
+            max_segments=int(args.splitter_max_segments),
+            overlap_tokens=int(args.splitter_overlap_tokens),
+            include_full_embedding=bool(args.include_full_embedding),
+            weighting=args.segment_weighting,
+            weight_stats=weight_stats,
+        )
+    else:
+        if args.segment_weighting in ("length", "idf"):
+            parser.error("--segment-weighting length/idf need token spans, so they require --splitter-mode rule")
+        if not args.splitter_checkpoint:
+            parser.error("--splitter-checkpoint is required when --splitter-mode rl")
+        splitter = MaxSimSplitter(
+            checkpoint_path=args.splitter_checkpoint,
+            device=args.splitter_device,
+            embedding_model=shared_embedder,
+            max_segments=int(args.splitter_max_segments),
+            overlap_tokens=int(args.splitter_overlap_tokens),
+            include_full_embedding=bool(args.include_full_embedding),
+        )
+        if args.segment_weighting != "uniform":
+            if not args.segment_weight_stats:
+                parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
+            splitter.segment_weights = SegmentRowWeighter(
+                args.segment_weighting,
+                torch.load(args.segment_weight_stats, map_location="cpu", weights_only=False),
+                include_full_embedding=bool(args.include_full_embedding),
+            )
 
     if args.similarity_evaluator == "string":
         similarity_evaluator = StringComparisonSimilarityEvaluator()
@@ -762,6 +830,16 @@ def main() -> None:
                 os.makedirs(hit_dir, exist_ok=True)
             hit_samples_f = open(hit_samples_path, "w", encoding="utf-8")
 
+        scores_path = None
+        scores_f = None
+        if args.log_scores:
+            scores_path = args.log_scores
+            if len(run_grid) > 1:
+                stem, ext = os.path.splitext(scores_path)
+                scores_path = f"{stem}_d{delta}_k{candidate_k}{ext or '.jsonl'}"
+            os.makedirs(os.path.dirname(os.path.abspath(scores_path)), exist_ok=True)
+            scores_f = open(scores_path, "w", encoding="utf-8")
+
         t0 = time.time()
         desc_base = f"Evaluating (Splitter) run={run_i}/{len(run_grid)} delta={delta} k={candidate_k}"
         pbar = tqdm(rows, desc=desc_base, unit="samples")
@@ -823,6 +901,16 @@ def main() -> None:
                     }
                 )
 
+                # Optional: the similarity score s passed to the verified policy, with the
+                # correctness c of the candidate it was compared against (1 = tp or fn).
+                if scores_f is not None:
+                    decision = policy.last_decision
+                    rec = {"sample_index": int(n), "is_hit": bool(is_hit)}
+                    if decision is not None:
+                        rec.update(decision)
+                        rec["c"] = int(d_tp or d_fn)
+                    scores_f.write(json.dumps(rec) + "\n")
+
                 # Optional: dump every cache hit sample to JSONL for later inspection.
                 if bool(is_hit) and hit_samples_f is not None:
                     rec = {
@@ -862,6 +950,9 @@ def main() -> None:
                     print(f"Cache-hit samples saved to {hit_samples_path}")
                 except Exception:
                     pass
+            if scores_f is not None:
+                scores_f.close()
+                print(f"Per-sample scores saved to {scores_path}")
 
         elapsed = time.time() - t0
 
@@ -1010,6 +1101,9 @@ def main() -> None:
                     "splitter_candidate_k": (None if int(candidate_k) == -1 else int(candidate_k)),
                     "splitter_use_cached_candidate_segments": bool(args.use_cached_candidate_segments),
                     "splitter_device": str(args.splitter_device),
+                    "splitter_mode": str(args.splitter_mode),
+                    "segment_weighting": str(args.segment_weighting),
+                    "segment_weight_stats": str(args.segment_weight_stats),
                     "splitter_checkpoint": str(args.splitter_checkpoint),
                 },
                 "cache_hit_list": cache_hit_list,
@@ -1056,6 +1150,17 @@ def main() -> None:
 
         time.sleep(0.1)
         vcache.vcache_policy.shutdown()
+
+        if args.dump_observations:
+            # Shutdown drains the background update queue, so every observation is in place.
+            # Each cached entry starts with the priors (0.0, 0) and (1.0, 1); drop them.
+            obs_records = []
+            for meta in vcache.vcache_policy.cache.get_all_embedding_metadata_objects():
+                for s_val, label in meta.observations[2:]:
+                    obs_records.append([int(meta.embedding_id), float(s_val), int(label)])
+            with open(args.dump_observations, "w") as f:
+                json.dump({"args": vars(args), "columns": ["embedding_id", "s", "c"], "observations": obs_records}, f)
+            print(f"Observations ({len(obs_records)}) saved to {args.dump_observations}")
 
     if len(all_summaries) > 1:
         print("\nAll runs summary:")
