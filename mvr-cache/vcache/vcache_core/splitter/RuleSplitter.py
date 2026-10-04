@@ -21,6 +21,7 @@ the same relative influence it has under uniform weighting.
 # 전체 흐름:
 #   1. 문장을 BGE로 한 번 임베딩해서 토큰마다 벡터를 얻는다.
 #   2. 구두점(쉼표, 마침표 등) 위치를 찾아 최대 max_segments번 자른다.
+#      자르는 위치는 문장 전체에 고르게 고른다 (select_boundaries).
 #   3. 잘린 구간마다 토큰 벡터를 평균 내서 "조각 벡터"를 만든다. (원본 MaxSimSplitter 함수 재사용)
 #   4. 조각마다 가중치를 계산해 둔다. vCache 정책이 MaxSim을 계산할 때 이 가중치로 가중 평균을 낸다.
 #
@@ -53,6 +54,32 @@ def punctuation_positions(input_ids: torch.Tensor, length: int, punct_ids: set) 
     #   - 맨 끝 [SEP] 바로 앞의 구두점(문장 끝 마침표 등)은 잘라도 의미 없는 빈 조각이 생기므로 제외
     ids = input_ids[:length].tolist()  # 텐서 → 파이썬 리스트 (패딩 제외, 실제 길이만큼)
     return [p for p in range(1, length - 2) if ids[p] in punct_ids]
+
+
+def select_boundaries(positions: list, length: int, max_segments: int) -> list:
+    """Pick at most `max_segments` cut points spread over the whole prompt.
+
+    For each target position length*k/(n+1), take the nearest unused punctuation mark.
+    (Earlier runs took the first `max_segments` marks, which left everything after the
+    4th mark in one long final segment.)
+    """
+    # 자르는 횟수가 0이면 분할하지 않음 (대조군: --splitter-max-segments 0)
+    if max_segments <= 0:
+        return []
+    # 구두점이 max_segments개 이하면 전부 자르면 되므로 고를 필요가 없다
+    if len(positions) <= max_segments:
+        return list(positions)
+    # [수정] 예전에는 앞에서부터 max_segments개만 썼다 → 4번째 구두점 이후가 마지막 조각 하나에 몰렸다.
+    #        이제 문장을 n+1등분하는 목표 위치(length*k/(n+1))마다 가장 가까운 구두점을 하나씩 고른다
+    #        (이미 고른 구두점은 다시 안 고름). 조각 길이가 비슷해지고 자르는 위치가 문장 전체에 퍼진다.
+    chosen = []
+    remaining = list(positions)
+    for k in range(1, max_segments + 1):
+        target = length * k / (max_segments + 1)
+        best = min(remaining, key=lambda p: abs(p - target))
+        chosen.append(best)
+        remaining.remove(best)
+    return sorted(chosen)
 
 
 def segment_spans(length: int, pointers: list) -> list:
@@ -233,8 +260,12 @@ class RulePunctuationSplitter(MaxSimSplitter):
         # [핵심 함수] 임베딩된 문장(enc) 하나 → 조각 벡터 텐서. 가중치도 함께 계산해 저장해 둔다.
         # enc: encode_text()의 결과 (토큰 번호, 토큰 벡터, 길이 등)
         length = int(enc["length"])  # 실제 토큰 수
-        # 구두점 위치를 찾고, 앞에서부터 최대 max_segments개만 사용 → 자를 위치
-        pointers = punctuation_positions(enc["input_ids"], length, self._punct_ids)[: self.max_segments]
+        # 구두점 위치를 찾고, 그중 최대 max_segments개를 골라 자를 위치로 쓴다
+        # [수정] 예전에는 앞에서부터 max_segments개만 썼다([: self.max_segments]).
+        #        이제 문장 전체에서 고르게 고른다 (select_boundaries).
+        pointers = select_boundaries(
+            punctuation_positions(enc["input_ids"], length, self._punct_ids), length, self.max_segments
+        )
         # 원본 MaxSimSplitter 함수로 자를 위치에서 조각 벡터(sent)와 전체 문장 벡터(full)를 만든다
         sent, full = self._segment_embeds_from_pointers(
             enc["token_emb"], length, pointers, overlap_tokens=self.overlap_tokens
