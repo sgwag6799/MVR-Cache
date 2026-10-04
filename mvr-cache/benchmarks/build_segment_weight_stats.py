@@ -118,7 +118,6 @@ def main() -> None:
     p.add_argument("--label-col", default="ID_Set")  # 같은 의미 묶음 열 (response-col이 없을 때 정답 기준)
     p.add_argument("--response-col", default=None)  # 응답 열. 주면 "응답이 같으면 정답 쌍"
     p.add_argument("--k", type=int, default=10)  # 프롬프트마다 이웃 후보 수 (학습 쌍 만들 때)
-    p.add_argument("--max-segments", type=int, default=4)  # 최대 자르는 횟수 (평가와 같게)
     p.add_argument("--mlp-hidden", type=int, default=128)  # MLP 중간층 크기
     p.add_argument("--epochs", type=int, default=40)  # MLP 학습 반복 수. 0이면 MLP 없이 idf/centroid만 저장
     p.add_argument("--lr", type=float, default=1e-3)  # 학습률
@@ -158,7 +157,6 @@ def main() -> None:
     splitter = RulePunctuationSplitter(
         device=args.device,
         embedding_model=embedder,
-        max_segments=args.max_segments,
         include_full_embedding=True,
     )
 
@@ -191,7 +189,7 @@ def main() -> None:
                     "dataset": args.dataset,
                     "start": args.start,
                     "n": n,
-                    "max_segments": args.max_segments,
+                    "max_segments": "all punctuation",
                     "mlp": False,
                     "min_weight": MIN_WEIGHT,
                 },
@@ -284,7 +282,7 @@ def main() -> None:
                 "start": args.start,
                 "n": n,
                 "k": args.k,
-                "max_segments": args.max_segments,
+                "max_segments": "all punctuation",
                 "seed": args.seed,
                 "mix_fullcos": bool(args.mix_fullcos),
                 "min_weight": MIN_WEIGHT,

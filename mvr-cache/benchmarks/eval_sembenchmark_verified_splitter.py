@@ -294,8 +294,9 @@ def main() -> None:
     parser.add_argument(
         "--splitter-max-segments",
         type=int,
-        default=4,
-        help="Max segments used by the RL splitter/pointer policy (default: 4).",
+        default=None,
+        help="RL splitter: max cut points (default 4). Rule splitter: cuts at every punctuation "
+        "mark by default; pass 0 for the no-split control.",
     )
     parser.add_argument(
         "--splitter-overlap-tokens",
@@ -556,10 +557,13 @@ def main() -> None:
                 parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
             weight_stats = torch.load(args.segment_weight_stats, map_location="cpu", weights_only=False)
         # 규칙 분할기 생성. 조각 수·겹침·전체 문장 행 포함 여부는 RL 분할기와 같은 옵션을 그대로 쓴다
+        # [수정] 규칙 분할기는 구두점마다 전부 자른다. --splitter-max-segments는 0(대조군)만 허용
+        if args.splitter_max_segments not in (None, 0):
+            parser.error("--splitter-mode rule cuts at every punctuation mark; use --splitter-max-segments 0 only for the no-split control")
         splitter = RulePunctuationSplitter(
             device=args.splitter_device,
             embedding_model=shared_embedder,
-            max_segments=int(args.splitter_max_segments),
+            max_segments=args.splitter_max_segments,
             overlap_tokens=int(args.splitter_overlap_tokens),
             include_full_embedding=bool(args.include_full_embedding),
             weighting=args.segment_weighting,
@@ -576,7 +580,8 @@ def main() -> None:
             checkpoint_path=args.splitter_checkpoint,
             device=args.splitter_device,
             embedding_model=shared_embedder,
-            max_segments=int(args.splitter_max_segments),
+            # RL 분할기는 원래대로 최대 자르는 횟수 기본 4
+            max_segments=4 if args.splitter_max_segments is None else int(args.splitter_max_segments),
             overlap_tokens=int(args.splitter_overlap_tokens),
             include_full_embedding=bool(args.include_full_embedding),
         )
