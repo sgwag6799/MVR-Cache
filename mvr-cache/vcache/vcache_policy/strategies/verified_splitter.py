@@ -217,6 +217,8 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         self.executor: Optional[ThreadPoolExecutor] = None
         self.callback_queue: Optional[CallbackQueue] = None
         # Set by process_request: the similarity score and fit behind the latest decision.
+        # [추가] 가장 최근 요청에서 vCache가 본 값(s, 판정, t̂, γ 등)을 담아두는 변수.
+        #        평가 스크립트가 --log-scores 옵션을 쓰면 요청마다 이 값을 읽어 파일로 저장한다.
         self.last_decision: Optional[dict] = None
 
         # RL splitter instance (expected: vcache.vcache_core.splitter.MaxSimSplitter.MaxSimSplitter)
@@ -281,11 +283,17 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             except Exception:
                 pass
 
+    # [추가] 점수 계산의 공통 입구. 기존에 _maxsim_from_tensors를 직접 부르던 4곳이 모두 이 함수를 거친다.
+    #        분할기가 조각별 가중치 함수(segment_weights)를 가지고 있으면 가중치를 넣어 MaxSim을 계산하고,
+    #        없으면(원래 RL 분할기 등) 기존과 똑같이 균등 가중치로 계산한다.
     def _score_tensors(self, query_tensor, corpus_tensor) -> float:
         """MaxSim with per-row weights when the splitter provides them (uniform otherwise)."""
+        # 분할기에 segment_weights 함수가 있는지 확인 (RulePunctuationSplitter / SegmentRowWeighter에 있음)
         weights_fn = getattr(self.splitter, "segment_weights", None)
         if weights_fn is None:
+            # 가중치 기능이 없는 분할기 → 원래 코드와 완전히 같은 계산
             return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        # 질문(query)과 후보(corpus) 각각의 조각 텐서로 가중치를 조회해서 함께 넘긴다
         return self._maxsim_from_tensors(
             query_tensor,
             corpus_tensor,
@@ -294,6 +302,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         )
 
     @staticmethod
+    # [수정] query_weights / corpus_weights 인자를 추가. 안 넘기면(None) 원래처럼 균등 가중치.
     def _maxsim_from_tensors(query_tensor, corpus_tensor, query_weights=None, corpus_weights=None) -> float:
         """
         Compute symmetric MaxSim similarity and return it in **[0, 1]** given:
@@ -321,10 +330,15 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             max_cos_sim_col = torch.max(cos, dim=0).values  # [C]
 
             # Weighted version (training-style); uniform unless the caller supplies weights.
+            # [수정] 원래는 여기서 항상 torch.ones(전부 1)로 균등 가중치를 썼다.
+            #        이제는 가중치가 들어오지 않았을 때만 1로 채우고, 들어오면 그 값을 쓴다.
+            # row_score = 질문 조각마다 "후보에서 가장 비슷한 조각과의 코사인"을 가중 평균
+            # col_score = 후보 조각마다 "질문에서 가장 비슷한 조각과의 코사인"을 가중 평균
             if query_weights is None:
                 query_weights = torch.ones(max_cos_sim_row.shape[0], device=dev, dtype=torch.float32)
             if corpus_weights is None:
                 corpus_weights = torch.ones(max_cos_sim_col.shape[0], device=dev, dtype=torch.float32)
+            # 가중치를 계산 텐서와 같은 장치(CPU/GPU)와 자료형(float32)으로 맞춘다
             query_weights = query_weights.to(device=dev, dtype=torch.float32)
             corpus_weights = corpus_weights.to(device=dev, dtype=torch.float32)
             row_score = torch.sum(max_cos_sim_row * query_weights) / (torch.sum(query_weights) + 1e-8)
@@ -478,12 +492,14 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors(
                 query, candidate
             )
+            # [수정] _maxsim_from_tensors 직접 호출 → _score_tensors 경유 (가중치 적용)
             return self._score_tensors(query_tensor, corpus_tensor)
 
         # Mixed mode: compute MaxSim + cosine(full_embed_no_cls)
         qenc = self.splitter.encode_text(query)
         cenc = self.splitter.encode_text(candidate)
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(qenc, cenc)
+        # [수정] 가중치 적용을 위해 _score_tensors 경유
         maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         fullcos01 = self._cos01(qenc["pooled_no_cls"], cenc["pooled_no_cls"])
         return 0.5 * (float(maxsim01) + float(fullcos01))
@@ -510,6 +526,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             pass
 
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(query_enc, cand_enc)
+        # [수정] 가중치 적용을 위해 _score_tensors 경유
         maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         if not bool(getattr(self, "mix_fullcos", False)):
             return float(maxsim01)
@@ -593,16 +610,24 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             prompt, query_enc, query_knn_emb_cpu
         )
         if nn_metadata is None or similarity_score is None:
+            # [추가] 비교할 캐시 항목이 없는 요청(캐시가 비어 있음 등)은 기록할 s가 없으므로 None
             self.last_decision = None
             response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
             self.__cache_add(prompt=prompt, response=response, id_set=id_set)
             return False, response, EmbeddingMetadataObj(embedding_id=-1, response="")
 
+        # [추가] 판정 직전에 이 캐시 항목이 가진 (s, c) 관측 개수를 저장 (사전값 2개 포함)
         n_obs_before = len(nn_metadata.observations)
         action = self.bayesian.select_action(similarity_score=similarity_score, metadata=nn_metadata)
         # Snapshot of what the verified policy saw for this request (read by the eval script
         # when --log-scores is set). t_hat/gamma are the fit used for this decision; they stay
         # None while the entry has too few observations and the policy always explores.
+        # [추가] 이번 판정의 기록. 각 항목 의미:
+        #   s            : vCache에 넘어간 유사도 점수 (가장 비슷한 후보의 점수)
+        #   embedding_id : 그 후보 캐시 항목의 번호
+        #   action       : "exploit"(재사용) 또는 "explore"(LLM 새로 호출)
+        #   n_obs        : 판정 시점의 관측 개수
+        #   t_hat, gamma : 이 항목의 로지스틱 모델 임계값과 기울기 (관측이 부족하면 None)
         self.last_decision = {
             "s": float(similarity_score),
             "embedding_id": int(nn_metadata.embedding_id),
@@ -720,6 +745,9 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                             s = self._maxsim_similarity_from_encoded(query_enc, cached_prompt)
                     else:
                         with self._time_block("maxsim.score_tensors"):
+                            # [수정] 가중치 적용을 위해 _score_tensors 경유.
+                            # 주의: multivector_top_k 실행은 이 경로를 타며, 여기서는 --mix-fullcos가 적용되지 않는다
+                            #       (순수 가중 MaxSim). 원본 코드도 동일한 동작.
                             s = self._score_tensors(query_tensor, cand_tensor)
                 else:
                     with self._time_block("maxsim.score_pair"):

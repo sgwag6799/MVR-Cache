@@ -91,6 +91,7 @@ from vcache.vcache_core.similarity_evaluator.strategies.string_comparison import
 )
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 from vcache.vcache_core.splitter.MaxSimSplitter import MaxSimSplitter
+# [추가] 구두점 규칙 분할기와, RL 분할기에 가중치를 붙이는 도우미 클래스
 from vcache.vcache_core.splitter.RuleSplitter import RulePunctuationSplitter, SegmentRowWeighter
 from vcache.inference_engine.strategies.benchmark import BenchmarkInferenceEngine
 from vcache.vcache_policy.strategies.verified_splitter import VerifiedSplitterDecisionPolicy
@@ -258,6 +259,7 @@ def main() -> None:
         help="How to evaluate correctness (match benchmark.py run-combination).",
     )
     parser.add_argument("--max-capacity", type=int, default=200_000)
+    # [추가] 분할 방식 선택: rl = 학습된 RL 분할기(원래 방식), rule = 구두점에서 자르는 규칙 분할기
     parser.add_argument(
         "--splitter-mode",
         choices=["rl", "rule"],
@@ -265,17 +267,20 @@ def main() -> None:
         help="'rl' uses the trained MaxSimSplitter checkpoint; 'rule' splits at punctuation "
         "(same split characters as the RL policy, capped at --splitter-max-segments boundaries).",
     )
+    # [추가] 조각별 가중치 방식 (기본 uniform = 원래와 동일한 균등 가중치)
     parser.add_argument(
         "--segment-weighting",
         choices=["uniform", "length", "idf", "centroid", "mlp"],
         default="uniform",
         help="Per-segment MaxSim weights for --splitter-mode rule (see RuleSplitter.py).",
     )
+    # [추가] idf/centroid/mlp 가중치에 필요한 통계 파일(.pt) 경로
     parser.add_argument(
         "--segment-weight-stats",
         default=None,
         help="Stats file from benchmarks/build_segment_weight_stats.py (needed for idf/centroid/mlp).",
     )
+    # [수정] 원래는 필수(required=True)였지만, rule 모드는 체크포인트가 필요 없어서 선택으로 변경
     parser.add_argument(
         "--splitter-checkpoint",
         default=None,
@@ -382,6 +387,7 @@ def main() -> None:
         default=None,
         help="Timestamp string used in results_<timestamp>.json when --benchmark-output-dir is set. Default matches benchmark.py format: YYYY-MM-DD_HH-MM",
     )
+    # [추가] 요청마다 vCache에 넘어간 s, 정답 여부 c, 판정, t̂·γ를 JSONL 파일로 기록
     parser.add_argument(
         "--log-scores",
         type=str,
@@ -401,6 +407,7 @@ def main() -> None:
             "If you pass a directory, it will create one file per (delta,candidate_k) run."
         ),
     )
+    # [추가] 실행이 끝난 뒤 캐시 항목별로 로지스틱 적합에 쓰인 (s, c) 관측 전체를 JSON으로 저장
     parser.add_argument(
         "--dump-observations",
         type=str,
@@ -539,12 +546,16 @@ def main() -> None:
 
     shared_embedder = EmbeddingModel(device=args.splitter_device)
     embedding_engine = BGEEmbeddingEngine(embedding_model=shared_embedder)
+    # [수정] 원래는 무조건 MaxSimSplitter(RL)를 만들었다. 이제 --splitter-mode에 따라 분할기를 고른다.
     if args.splitter_mode == "rule":
+        # --- 규칙 분할기 ---
         weight_stats = None
+        # idf/centroid/mlp는 미리 만든 통계 파일이 있어야 계산 가능 → 없으면 에러로 종료
         if args.segment_weighting in ("idf", "centroid", "mlp"):
             if not args.segment_weight_stats:
                 parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
             weight_stats = torch.load(args.segment_weight_stats, map_location="cpu", weights_only=False)
+        # 규칙 분할기 생성. 조각 수·겹침·전체 문장 행 포함 여부는 RL 분할기와 같은 옵션을 그대로 쓴다
         splitter = RulePunctuationSplitter(
             device=args.splitter_device,
             embedding_model=shared_embedder,
@@ -555,6 +566,8 @@ def main() -> None:
             weight_stats=weight_stats,
         )
     else:
+        # --- RL 분할기 (원래 방식) ---
+        # length/idf는 조각의 토큰 위치 정보가 필요한데 RL 분할기는 그걸 밖으로 주지 않아서 지원 불가
         if args.segment_weighting in ("length", "idf"):
             parser.error("--segment-weighting length/idf need token spans, so they require --splitter-mode rule")
         if not args.splitter_checkpoint:
@@ -567,6 +580,7 @@ def main() -> None:
             overlap_tokens=int(args.splitter_overlap_tokens),
             include_full_embedding=bool(args.include_full_embedding),
         )
+        # centroid/mlp는 조각 임베딩만 있으면 계산 가능 → RL 분할기에 가중치 함수를 붙인다 (Step 5)
         if args.segment_weighting != "uniform":
             if not args.segment_weight_stats:
                 parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
@@ -830,9 +844,11 @@ def main() -> None:
                 os.makedirs(hit_dir, exist_ok=True)
             hit_samples_f = open(hit_samples_path, "w", encoding="utf-8")
 
+        # [추가] --log-scores 파일 열기
         scores_path = None
         scores_f = None
         if args.log_scores:
+            # 델타/k 조합을 여러 개 돌리면 파일이 덮어써지지 않게 이름 뒤에 _d{델타}_k{k}를 붙인다
             scores_path = args.log_scores
             if len(run_grid) > 1:
                 stem, ext = os.path.splitext(scores_path)
@@ -903,11 +919,15 @@ def main() -> None:
 
                 # Optional: the similarity score s passed to the verified policy, with the
                 # correctness c of the candidate it was compared against (1 = tp or fn).
+                # [추가] 이번 요청 기록 한 줄 쓰기
                 if scores_f is not None:
+                    # 정책(verified_splitter.py)이 판정 직후 남겨 둔 값 (s, 판정, t̂, γ, 관측 수)
                     decision = policy.last_decision
                     rec = {"sample_index": int(n), "is_hit": bool(is_hit)}
                     if decision is not None:
                         rec.update(decision)
+                        # c = 가장 비슷한 후보의 답이 실제로 맞았는지.
+                        #     tp(재사용해서 맞음) 또는 fn(재사용 안 했지만 했으면 맞았음) → 1, 그 외 → 0
                         rec["c"] = int(d_tp or d_fn)
                     scores_f.write(json.dumps(rec) + "\n")
 
@@ -950,6 +970,7 @@ def main() -> None:
                     print(f"Cache-hit samples saved to {hit_samples_path}")
                 except Exception:
                     pass
+            # [추가] 기록 파일 닫기
             if scores_f is not None:
                 scores_f.close()
                 print(f"Per-sample scores saved to {scores_path}")
@@ -1101,6 +1122,7 @@ def main() -> None:
                     "splitter_candidate_k": (None if int(candidate_k) == -1 else int(candidate_k)),
                     "splitter_use_cached_candidate_segments": bool(args.use_cached_candidate_segments),
                     "splitter_device": str(args.splitter_device),
+                    # [추가] 결과 파일에 분할 방식과 가중치 설정도 기록 (나중에 어떤 조건이었는지 확인용)
                     "splitter_mode": str(args.splitter_mode),
                     "segment_weighting": str(args.segment_weighting),
                     "segment_weight_stats": str(args.segment_weight_stats),
@@ -1151,9 +1173,12 @@ def main() -> None:
         time.sleep(0.1)
         vcache.vcache_policy.shutdown()
 
+        # [추가] 캐시 항목별 (s, c) 관측 전체 저장
         if args.dump_observations:
             # Shutdown drains the background update queue, so every observation is in place.
             # Each cached entry starts with the priors (0.0, 0) and (1.0, 1); drop them.
+            # (shutdown 이후라 백그라운드 업데이트가 모두 끝난 상태. 각 항목의 처음 2개는 가짜 사전값이라 제외)
+            # 저장 형식: [캐시 항목 번호, s, c] 목록
             obs_records = []
             for meta in vcache.vcache_policy.cache.get_all_embedding_metadata_objects():
                 for s_val, label in meta.observations[2:]:
