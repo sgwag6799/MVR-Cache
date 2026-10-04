@@ -61,23 +61,28 @@ def _word_at(text: str, a: int) -> tuple[str, int]:
 
 
 def is_protected(text: str, a: int) -> bool:
-    """True when the punctuation character text[a] must not be a cut point (rules 1, 2, 3, 5, list numbers of 6)."""
+    """True when the punctuation character text[a] must not be a cut point."""
+    return protection_rule(text, a) != 0
+
+
+def protection_rule(text: str, a: int) -> int:
+    """Which rule keeps text[a] from being a cut point: 1, 2, 3, 5 or 6 (list number); 0 = cut."""
     c = text[a]
     prev = text[a - 1] if a > 0 else ""
     nxt = text[a + 1] if a + 1 < len(text) else ""
 
     # 1. 숫자 안: 앞뒤가 바로 숫자 (3.5 / 1,000 / 10:30 / 192.168.0.1 / v2.1.3)
     if c in ".,:" and prev.isdigit() and nxt.isdigit():
-        return True
+        return 1
 
     # 5. 이모티콘 (:) ;) :-( :D) — 구두점이 이모티콘의 눈 부분이고, 뒤에 글자가 바로 붙지 않은 경우
     if c in ":;":
         m = _EMOTICON.match(text, a)
         if m and (m.end() >= len(text) or not text[m.end()].isalnum()):
-            return True
+            return 5
     # ^^; ^_^; 같은 이모티콘의 세미콜론
     if c == ";" and "^" in text[max(0, a - 3):a]:
-        return True
+        return 5
 
     word, start = _word_at(text, a)
     # 단어 앞의 따옴표·괄호를 떼어 내고, 그만큼 위치(start)도 옮긴다
@@ -90,32 +95,46 @@ def is_protected(text: str, a: int) -> bool:
     # 3. URL·이메일·파일 이름 안의 구두점 (단어 끝에 붙은 문장 부호는 제외)
     if 0 <= idx < len(core.rstrip(".")):
         if "://" in low or low.startswith("www.") or ("@" in low and "." in low):
-            return True
+            return 3
         if c == "." and _WEB_SUFFIX.search(low.rstrip(".")):
-            return True
+            return 3
 
     # 6. 맨 앞 목록 번호 "1." "2." "a." — 글 맨 앞이거나 앞 문장이 끝난 직후에 오는 번호의 마침표
     if c == "." and re.fullmatch(r"(?:\d{1,2}|[a-z])\.", low) and idx == len(core) - 1:
         before = text[:start].rstrip()
         if not before or before[-1] in ".!?:;":
-            return True
+            return 6
 
     # 2. 약어·호칭 안이나 끝의 마침표
     if c == "." and 0 <= idx < len(core):
         key = low.rstrip(".")
         if key in ABBREVIATIONS or _ACRONYM.fullmatch(low) or _ACRONYM.fullmatch(key):
-            return True
+            return 2
         if key in NUMBER_ABBREVIATIONS and text[a + 1:].lstrip()[:1].isdigit():
-            return True
-    return False
+            return 2
+    return 0
 
 
-def rule_cut_points(text: str, offsets: list, input_ids: list, punct_ids: set) -> list:
+# rule_cut_points(stats=...)가 채우는 규칙별 발동 횟수 키
+RULE_COUNT_KEYS = (
+    "rule1_number", "rule2_abbrev", "rule3_web", "rule4_run_merged",
+    "rule5_emoticon", "rule6_list_number", "rule6_empty_merged",
+)
+_RULE_KEY = {1: "rule1_number", 2: "rule2_abbrev", 3: "rule3_web", 5: "rule5_emoticon", 6: "rule6_list_number"}
+
+
+def rule_cut_points(text: str, offsets: list, input_ids: list, punct_ids: set, stats: dict = None) -> list:
     """Token positions to cut at (inclusive segment ends), following rules 1-6.
 
     offsets / input_ids: from the tokenizer with return_offsets_mapping=True; position 0
-    is [CLS] and the last position is [SEP].
+    is [CLS] and the last position is [SEP]. When `stats` is a dict, the number of times
+    each rule fired is added to it (keys in RULE_COUNT_KEYS).
     """
+    # [로그] stats를 넘기면 규칙별로 몇 번 발동했는지 센다 (실험 로그 B2)
+    def bump(key):
+        if stats is not None:
+            stats[key] = stats.get(key, 0) + 1
+
     length = len(input_ids)
     # 토큰마다 글자(문자·숫자)를 포함하는지. [CLS]/[SEP]는 offset이 (0, 0)이라 False
     has_word = [any(ch.isalnum() for ch in text[a:b]) for a, b in offsets]
@@ -126,11 +145,16 @@ def rule_cut_points(text: str, offsets: list, input_ids: list, punct_ids: set) -
         if input_ids[p] not in punct_ids:
             continue
         a, b = offsets[p]
-        if b <= a or is_protected(text, a):
+        if b <= a:
+            continue
+        rule = protection_rule(text, a)
+        if rule:
+            bump(_RULE_KEY[rule])
             continue
         # 4. 연속·반복 구두점: 직전 후보와 사이에 글자(문자·숫자)가 없으면 같은 묶음 → 마지막 위치에서 한 번만 자름
         if cuts and not any(ch.isalnum() for ch in text[offsets[cuts[-1]][1]:a]):
             cuts[-1] = p
+            bump("rule4_run_merged")
             continue
         cuts.append(p)
 
@@ -144,6 +168,7 @@ def rule_cut_points(text: str, offsets: list, input_ids: list, punct_ids: set) -
         )
         if empty is None:
             break
+        bump("rule6_empty_merged")
         if empty == len(bounds) - 2:
             cuts.pop()  # 마지막 조각이 비면 → 앞 조각에 붙임
         elif empty == 0:

@@ -28,6 +28,7 @@ from datetime import datetime
 import importlib
 import json
 import os
+import random
 import sys
 import time
 import warnings
@@ -95,6 +96,7 @@ from vcache.vcache_core.splitter.MaxSimSplitter import MaxSimSplitter
 from vcache.vcache_core.splitter.RuleSplitter import RulePunctuationSplitter, SegmentRowWeighter
 from vcache.inference_engine.strategies.benchmark import BenchmarkInferenceEngine
 from vcache.vcache_policy.strategies.verified_splitter import VerifiedSplitterDecisionPolicy
+from benchmarks.run_log import RunLogger  # [추가] 실험 로그 A~D (--run-log-dir)
 
 # Guard against accidentally importing the sibling `vcahce/` or `vcache_128/` splitter.
 if "max_segments" not in MaxSimSplitter.__init__.__code__.co_varnames:
@@ -418,6 +420,19 @@ def main() -> None:
             "(per cached entry, excluding the two prior points) to this JSON file after the run."
         ),
     )
+    # [추가] 실험 로그 (A~D). 자세한 항목은 benchmarks/run_log.py 맨 위 설명 참고
+    parser.add_argument("--run-log-dir", default=None,
+                        help="Write run.json / requests.jsonl / diag.jsonl / progress.jsonl here (see benchmarks/run_log.py).")
+    parser.add_argument("--run-id", default=None, help="Run identifier recorded in run.json.")
+    parser.add_argument("--condition", default=None, help="Condition name recorded in run.json (e.g. ③ IDF).")
+    parser.add_argument("--repeat", type=int, default=None, help="Repeat number recorded in run.json.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed for the explore/exploit random draw and the diagnostic sample (default: unseeded).")
+    parser.add_argument("--diag-frac", type=float, default=0.02,
+                        help="Share of prompts that get the sample diagnostics (diag.jsonl). Brute force over the cache: slow.")
+    parser.add_argument("--progress-every", type=int, default=1000, help="Write progress.jsonl every N prompts.")
+    parser.add_argument("--train-file", default=None,
+                        help="Training split (parquet); used to flag test prompts that also appear in training.")
     parser.add_argument(
         "--timing-output",
         type=str,
@@ -824,8 +839,32 @@ def main() -> None:
             mix_fullcos=bool(args.mix_fullcos),
             timing_collector=timing,
             timing_cuda_sync=bool(args.timing_cuda_sync),
+            detail_log=bool(args.run_log_dir),  # [추가] 로그가 켜져 있을 때만 상세 값을 모은다
+            seed=args.seed,
         )
         vcache = VCache(config=config, policy=policy)
+
+        # [추가] 실험 로그 준비 (A. 실행 단위 기록)
+        run_logger = None
+        if args.run_log_dir:
+            if not dataset_is_local_file:
+                parser.error("--run-log-dir needs a local dataset file (.parquet/.csv)")
+            log_dir = args.run_log_dir
+            if len(run_grid) > 1:
+                log_dir = os.path.join(log_dir, f"d{delta}_k{candidate_k}")
+            run_logger = RunLogger(log_dir, delta=float(delta), progress_every=int(args.progress_every))
+            train_prompts = None
+            if args.train_file:
+                train_prompts = set(pd.read_parquet(args.train_file)["prompt"].astype(str))
+            # 프롬프트 → (과제, id): 선택된 이웃의 과제를 찾을 때 사용
+            prompt_info = {}
+            for rr in rows:
+                prompt_info.setdefault(str(rr["prompt"]), {"task": rr.get("dataset_name"), "id": rr.get("id")})
+            run_logger.write_header(
+                args=args, df=df, train_prompts=train_prompts,
+                extra={"candidate_k": int(candidate_k)},
+            )
+            diag_rng = random.Random(args.seed)
 
         hits = 0
         tp = fp = tn = fn = 0
@@ -877,6 +916,10 @@ def main() -> None:
                     label_response = ""
                 # BenchmarkInferenceEngine expects set_next_response() to set the attribute.
                 inference_engine.set_next_response(label_response)
+
+                # [추가] 샘플 진단 대상이면 이번 요청에서 진단(C)을 계산하도록 표시
+                if run_logger is not None and diag_rng.random() < float(args.diag_frac):
+                    policy.diag_next = True
 
                 step_t0 = time.time()
                 is_hit, resp, resp_meta, nn_meta = vcache.infer_with_cache_info(
@@ -935,6 +978,27 @@ def main() -> None:
                         #     tp(재사용해서 맞음) 또는 fn(재사용 안 했지만 했으면 맞았음) → 1, 그 외 → 0
                         rec["c"] = int(d_tp or d_fn)
                     scores_f.write(json.dumps(rec) + "\n")
+
+                # [추가] 실험 로그 B(프롬프트 단위), C(샘플 진단), D(주기 기록)
+                if run_logger is not None:
+                    # 후보 응답이 이 프롬프트에 맞는지(c): tp/fn 판정과 같은 규칙
+                    def correct_fn(cand_response, cand_id_set, _id=id_set, _label=label_response):
+                        if _id != -1:
+                            return _id == cand_id_set
+                        return answers_have_same_meaning_static(_label, cand_response)
+
+                    run_logger.log_request(
+                        order=n, row=r, prompt=str(prompt),
+                        in_train=None if train_prompts is None else str(prompt) in train_prompts,
+                        detail=policy.last_detail, correct_fn=correct_fn, prompt_info=prompt_info,
+                        is_hit=bool(is_hit), false_hit=bool(d_fp), total_s=step_latency,
+                    )
+                    run_logger.log_diag(order=n, task=r.get("dataset_name"), diag=policy.last_diag, correct_fn=correct_fn)
+                    mv = getattr(policy, "_mv_index", None)
+                    run_logger.maybe_progress(
+                        cache_vectors=int(policy.cache.vector_db_size()),
+                        multivector_vectors=None if mv is None else int(mv._next_vector_id),
+                    )
 
                 # Optional: dump every cache hit sample to JSONL for later inspection.
                 if bool(is_hit) and hit_samples_f is not None:
@@ -1177,6 +1241,19 @@ def main() -> None:
 
         time.sleep(0.1)
         vcache.vcache_policy.shutdown()
+
+        # [추가] 실험 로그 마무리: 종료 시각, 결과 요약, HNSW 파라미터
+        if run_logger is not None:
+            vdb = policy.cache.embedding_store.vector_db
+            mv = getattr(policy, "_mv_index", None)
+            run_logger.finish({
+                "summary": summary,
+                "hnsw_sentence": {"M": getattr(vdb, "M", None), "ef_construction": getattr(vdb, "ef_construction", None),
+                                  "ef_search": getattr(vdb, "ef", None)},
+                "hnsw_multivector": None if mv is None else {"M": mv.M, "ef_construction": mv.ef_construction,
+                                                             "ef_search": mv.ef},
+            })
+            print(f"Run logs saved to {run_logger.dir}")
 
         # [추가] 캐시 항목별 (s, c) 관측 전체 저장
         if args.dump_observations:

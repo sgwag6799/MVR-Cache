@@ -29,6 +29,7 @@ the same relative influence it has under uniform weighting.
 # 평가 스크립트에서 분할기만 바꿔 끼우면 점수 계산·검색·캐시 정책은 그대로 둔 채 "자르는 위치"만 달라진다.
 
 import hashlib  # 텐서 내용으로 고유 키(해시)를 만들 때 사용
+import time
 from types import SimpleNamespace  # 속성만 담는 간단한 객체를 만들 때 사용
 
 import torch
@@ -36,7 +37,7 @@ import torch.nn.functional as F  # 코사인 유사도, softplus 등 함수 모�
 
 from .embedding_model import EmbeddingModel  # BGE 임베딩 모델 래퍼
 from .MaxSimSplitter import MaxSimSplitter  # 원본 RL 분할기 (조각 벡터 만드는 함수를 물려받기 위해 상속)
-from .punctuation_rules import rule_cut_points  # 어디서 자를지 정하는 규칙 1~6
+from .punctuation_rules import RULE_COUNT_KEYS, rule_cut_points  # 어디서 자를지 정하는 규칙 1~6
 
 # Same split characters as AdaptedPointerNetworkPolicy._init_punctuation_ids.
 # 자를 수 있는 구두점 목록. RL 분할기가 고를 수 있는 후보 문자와 똑같이 맞췄다 (영문 + 전각 문자).
@@ -211,6 +212,15 @@ class RulePunctuationSplitter(MaxSimSplitter):
         self._weight_cache: dict = {}
         # 저장된 가중치를 못 찾아 다시 계산한 횟수 (디버깅용)
         self.weight_cache_misses = 0
+        # [로그] 단계별 시간 기록용 훅. 정책이 timing_hook(name, 초)를 넣어 주면 분할·조각 임베딩·가중치 시간을 보낸다
+        self.timing_hook = None
+
+    def _tick(self, name: str, t0: float) -> float:
+        # timing_hook이 있으면 (name, 경과 초)를 보내고 현재 시각을 돌려준다
+        now = time.perf_counter()
+        if self.timing_hook is not None:
+            self.timing_hook(name, now - t0)
+        return now
 
     def _weights_for_segments(self, sent: torch.Tensor, spans: list, input_ids: torch.Tensor) -> torch.Tensor:
         # 조각별 가중치 계산. sent = 조각 벡터들, spans = 조각별 토큰 범위, input_ids = 토큰 번호
@@ -255,19 +265,48 @@ class RulePunctuationSplitter(MaxSimSplitter):
             raise ValueError("RulePunctuationSplitter needs encodings from its own encode_text() (text offsets missing).")
         return rule_cut_points(enc["text"], offsets, ids, self._punct_ids)
 
+    def describe_split(self, enc: dict) -> dict:
+        """Segments of an encoded prompt and how often each cutting rule fired (log B2)."""
+        # [로그] 조각 텍스트, 조각별 토큰 수, 1토큰 조각 수, 규칙별 발동 횟수
+        length = int(enc["length"])
+        offsets = enc["offsets"]
+        stats = {k: 0 for k in RULE_COUNT_KEYS}
+        if self.max_segments == 0:
+            cuts = []
+        else:
+            ids = enc["input_ids"][:length].tolist()
+            cuts = rule_cut_points(enc["text"], offsets, ids, self._punct_ids, stats)
+        texts, n_tokens = [], []
+        for s, e in segment_spans(length, cuts):
+            # [CLS]/[SEP] 같은 특수 토큰은 offset이 (0, 0)이라 제외하고 센다
+            real = [i for i in range(s, e) if offsets[i][1] > offsets[i][0]]
+            n_tokens.append(len(real))
+            texts.append(enc["text"][offsets[real[0]][0]:offsets[real[-1]][1]] if real else "")
+        return {
+            "n_segments": len(texts),
+            "segments": texts,
+            "segment_tokens": n_tokens,
+            "n_one_token_segments": sum(1 for n in n_tokens if n == 1),
+            "rule_counts": stats,
+        }
+
     def split_text_return_maxsim_tensor_from_encoded(self, enc: dict):
         # [핵심 함수] 임베딩된 문장(enc) 하나 → 조각 벡터 텐서. 가중치도 함께 계산해 저장해 둔다.
         # enc: encode_text()의 결과 (토큰 번호, 토큰 벡터, 길이 등)
         length = int(enc["length"])  # 실제 토큰 수
+        t0 = time.perf_counter()
         # 규칙 1~6에 따라 자를 위치를 정한다 (max_segments=0이면 자르지 않음)
         pointers = self.cut_points(enc)
+        t0 = self._tick("split.cut_points", t0)
         # 원본 MaxSimSplitter 함수로 자를 위치에서 조각 벡터(sent)와 전체 문장 벡터(full)를 만든다
         sent, full = self._segment_embeds_from_pointers(
             enc["token_emb"], length, pointers, overlap_tokens=self.overlap_tokens
         )
+        t0 = self._tick("split.segment_pooling", t0)
         # 조각별 가중치 계산 후 하한 적용
         weights = self._weights_for_segments(sent, segment_spans(length, pointers), enc["input_ids"])
         weights = weights.float().clamp_min(MIN_WEIGHT)
+        self._tick("split.weights", t0)
         if self.include_full_embedding:
             # 조각들 뒤에 전체 문장 벡터를 한 행 붙인다
             out = torch.cat([sent, full], dim=0).to(dtype=torch.float32)

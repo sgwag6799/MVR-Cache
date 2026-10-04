@@ -29,6 +29,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import json
 
 import numpy as np
 import pandas as pd
@@ -154,11 +155,13 @@ def main() -> None:
     vocab = len(splitter.embedding_model.tokenizer)  # 어휘 크기
     doc_freq = torch.zeros(vocab)  # 토큰별 "등장한 문장 수" (문서 빈도)
     tensors, knn, nocls = [], [], []
+    seg_tokens = []  # [로그 E] 프롬프트별 조각 토큰 수 (가중치 분포를 길이별로 보기 위함)
     for text in tqdm(prompts, desc="encode+split"):
         enc = splitter.encode_text(text)  # 토큰 번호, 토큰 벡터, 문장 벡터
         # 이 문장에 나온 토큰 종류마다 1씩 증가 (한 문장에 여러 번 나와도 1번만 셈)
         doc_freq[torch.unique(enc["input_ids"][: enc["length"]].cpu())] += 1
         tensors.append(splitter.split_text_return_maxsim_tensor_from_encoded(enc).cpu())  # 조각 + 전체 행
+        seg_tokens.append(splitter.describe_split(enc)["segment_tokens"])
         knn.append(enc["pooled_knn"].float().cpu())  # 이웃 검색용 문장 벡터
         nocls.append(enc["pooled_no_cls"].float().cpu())  # 전체 문장 코사인용 벡터
 
@@ -221,6 +224,20 @@ def main() -> None:
         pairs[name] = (ai, bi, y)
         print(f"{name}: {len(y)} pairs, positive rate {y.mean():.3f}")
 
+    # [로그 E] 학습 쌍 통계: 쌍 수, 양성 비율, 과제별 쌍 수·양성 비율
+    task_col = df["dataset_name"].tolist() if "dataset_name" in df.columns else None
+    train_log = {"args": vars(args), "pairs": {}, "epochs": []}
+    for name, (a_, _, y_) in pairs.items():
+        info = {"n": int(len(y_)), "positive_rate": round(float(y_.mean()), 4)}
+        if task_col is not None:
+            by = {}
+            for t in sorted(set(task_col)):
+                m = torch.tensor([task_col[int(i)] == t for i in a_])
+                if m.any():
+                    by[t] = {"n": int(m.sum()), "positive_rate": round(float(y_[m].mean()), 4)}
+            info["by_task"] = by
+        train_log["pairs"][name] = info
+
     # ---- MLP 학습 ----
     mlp = SegmentWeightMLP(dim=H, hidden=args.mlp_hidden)
     # 점수(0~1)를 로짓으로 바꾸는 보정 파라미터 a, b도 함께 학습 (vCache의 로지스틱과 비슷한 역할)
@@ -229,9 +246,11 @@ def main() -> None:
     ai, bi, y = pairs["train"]
     # 정답 쌍이 많으면(불균형) 오답을 잘 못 배우므로, 정답 쌍 손실에 (오답 수/정답 수) 배를 곱해 균형을 맞춘다
     pos_weight = (1 - y.mean()) / y.mean().clamp_min(1e-6)
+    va, vb, vy = pairs["val"]
+    best = {"epoch": -1, "val_auc": -1.0, "state": None}
     for epoch in range(args.epochs):
         perm = torch.randperm(len(y))  # 매 에폭 쌍 순서 섞기
-        total = 0.0
+        total, grad_norms = 0.0, []
         for start in range(0, len(y), 512):  # 512쌍씩 배치
             b = perm[start : start + 512]
             # 전체 프롬프트의 가중치를 매번 다시 계산 (정확하지만 느림)
@@ -243,10 +262,40 @@ def main() -> None:
             )
             opt.zero_grad()  # 이전 기울기 초기화
             loss.backward()  # 기울기 계산
+            # [로그 E] 기울기 크기 (업데이트 전)
+            grad_norms.append(float(torch.norm(torch.stack([
+                p.grad.norm() for p in list(mlp.parameters()) + [calib] if p.grad is not None
+            ]))))
             opt.step()  # MLP와 a, b 업데이트
             total += loss.item() * len(b)
+
+        # [로그 E] 에폭마다 val BCE·AUC 계산, val AUC가 가장 높은 에폭의 MLP를 최종으로 선택
+        with torch.no_grad():
+            w = rows_weights(mlp, rows, mask, n_seg)
+            vs = pair_scores(rows, mask, full_nocls, va, vb, w, args.mix_fullcos)
+            val_bce = float(F.binary_cross_entropy_with_logits(calib[0] * vs + calib[1], vy, pos_weight=pos_weight))
+            val_auc = float(roc_auc_score(vy.numpy(), vs.numpy()))
+        train_log["epochs"].append({
+            "epoch": epoch,
+            "train_bce": round(total / len(y), 5),
+            "val_bce": round(val_bce, 5),
+            "val_auc": round(val_auc, 5),
+            "lr": opt.param_groups[0]["lr"],
+            "grad_norm_mean": round(float(np.mean(grad_norms)), 5),
+            "grad_norm_max": round(float(np.max(grad_norms)), 5),
+            "calib": [round(float(v), 4) for v in calib.detach()],
+        })
+        if val_auc > best["val_auc"]:
+            best = {"epoch": epoch, "val_auc": val_auc,
+                    "state": {k: v.detach().clone() for k, v in mlp.state_dict().items()}}
         if epoch % 10 == 0 or epoch == args.epochs - 1:
-            print(f"epoch {epoch}: train BCE {total / len(y):.4f}")
+            print(f"epoch {epoch}: train BCE {total / len(y):.4f}  val BCE {val_bce:.4f}  val AUC {val_auc:.4f}")
+
+    if best["state"] is not None:
+        mlp.load_state_dict(best["state"])
+    train_log["selected_epoch"] = best["epoch"]
+    train_log["selected_val_auc"] = round(best["val_auc"], 5)
+    print(f"selected epoch {best['epoch']} (val AUC {best['val_auc']:.4f})")
 
     # ---- 학습 결과 확인: 균등 가중치 vs MLP 가중치의 AUC 비교 (학습/검증 쌍 각각) ----
     uniform_w = torch.where(mask, torch.ones(n, s_max), torch.zeros(n, s_max))
@@ -260,6 +309,31 @@ def main() -> None:
             yy.numpy(), pair_scores(rows, mask, full_nocls, a, b, mlp_w, args.mix_fullcos).numpy()
         )
         print(f"{name} AUC  uniform {auc_u:.4f}  mlp {auc_m:.4f}")
+        train_log.setdefault("final_auc", {})[name] = {"uniform": round(float(auc_u), 5), "mlp": round(float(auc_m), 5)}
+
+    # [로그 E] 학습된 가중치 분포: 조각 위치별(처음/중간/끝), 길이별 평균, 프롬프트별 엔트로피
+    by_pos, by_len, entropies = {"first": [], "middle": [], "last": [], "only": []}, {}, []
+    for i in range(n):
+        k_seg = int(n_seg[i])
+        wi = mlp_w[i, :k_seg].numpy()
+        for j, wv in enumerate(wi):
+            pos = "only" if k_seg == 1 else "first" if j == 0 else "last" if j == k_seg - 1 else "middle"
+            by_pos[pos].append(float(wv))
+            ln = seg_tokens[i][j] if j < len(seg_tokens[i]) else 0
+            bucket = "1" if ln <= 1 else "2-3" if ln <= 3 else "4-7" if ln <= 7 else "8-15" if ln <= 15 else "16+"
+            by_len.setdefault(bucket, []).append(float(wv))
+        if k_seg > 1:
+            pr = wi / wi.sum()
+            entropies.append(float(-(pr * np.log(pr + 1e-12)).sum() / np.log(k_seg)))  # 1 = 균등, 0 = 한 조각에 몰림
+    train_log["weight_distribution"] = {
+        "by_position_mean": {k: round(float(np.mean(v)), 5) for k, v in by_pos.items() if v},
+        "by_length_mean": {k: round(float(np.mean(v)), 5) for k, v in sorted(by_len.items())},
+        "normalized_entropy_mean": round(float(np.mean(entropies)), 5) if entropies else None,
+    }
+    log_path = args.out + ".train_log.json"
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(train_log, f, ensure_ascii=False, indent=1, default=str)
+    print(f"training log -> {log_path}")
 
     # ---- 저장: idf, centroid, MLP 파라미터, 설정 정보(meta) ----
     torch.save(
@@ -276,6 +350,7 @@ def main() -> None:
                 "max_segments": "all punctuation",
                 "seed": args.seed,
                 "mix_fullcos": bool(args.mix_fullcos),
+                "selected_epoch": train_log.get("selected_epoch"),
                 "min_weight": MIN_WEIGHT,
             },
         },

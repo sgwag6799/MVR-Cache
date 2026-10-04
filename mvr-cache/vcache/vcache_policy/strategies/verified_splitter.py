@@ -23,6 +23,67 @@ from vcache.vcache_policy.vcache_policy import VCachePolicy
 PAD_PARENT_ID = np.iinfo(np.uint64).max
 
 
+class _LoggedAlgorithm(_Algorithm):
+    """The verified explore/exploit rule of _Algorithm.select_action, unchanged, but it keeps
+    what the decision used in `last_info` (log B7) and can draw u from a seeded generator.
+
+    With seed=None, u comes from the global `random` module exactly as in _Algorithm.
+    """
+    # [로그] vCache 판정(로지스틱 함수)의 내부 값을 남기기 위한 클래스.
+    #        판정 규칙은 verified.py의 _Algorithm.select_action과 똑같이 옮겨 왔고, 값만 기록한다.
+
+    def __init__(self, delta: float, seed: Optional[int] = None):
+        super().__init__(delta=delta)
+        # seed를 주면 탐색/활용 난수 u를 고정된 생성기에서 뽑아 실행을 재현할 수 있다
+        self._rng = random.Random(seed) if seed is not None else None
+        self.last_info: Optional[dict] = None
+
+    def select_action(self, similarity_score: float, metadata: EmbeddingMetadataObj) -> _Action:
+        similarity_score = round(similarity_score, 3)
+        # 판정 전 값 (이전 판정에서 적합된 t̂, γ)
+        info = {
+            "s_rounded": similarity_score,
+            "n_obs": len(metadata.observations),
+            "t_hat_before": metadata.t_hat,
+            "gamma_before": metadata.gamma,
+            "var_t_before": getattr(metadata, "var_t", None),
+            "t_prime_before": metadata.t_prime,
+            "t_hat": None, "gamma": None, "var_t": None, "t_prime": None,
+            "alpha": None, "tau": None, "u": None, "reason": None,
+        }
+        self.last_info = info
+        similarities = np.array([obs[0] for obs in metadata.observations])
+        labels = np.array([obs[1] for obs in metadata.observations])
+
+        if len(similarities) < 6 or len(labels) < 6:
+            info["reason"] = "few_observations"  # 관측 6개 미만 → 무조건 탐색
+            return _Action.EXPLORE
+
+        t_hat, gamma, var_t = self._estimate_parameters(similarities=similarities, labels=labels)
+        if t_hat == -1:
+            info["reason"] = "fit_failed"  # 로지스틱 적합 실패 → 탐색
+            return _Action.EXPLORE
+        metadata.gamma = gamma
+        metadata.t_hat = t_hat
+        metadata.var_t = var_t
+
+        start_time = time.time()
+        tau = self._get_tau(var_t=var_t, s=similarity_score, t_hat=t_hat, metadata=metadata)
+        self.tau_latencies.append(time.time() - start_time)
+
+        u = self._rng.uniform(0, 1) if self._rng is not None else random.uniform(0, 1)
+        # 판정 후 값: 이번에 적합한 t̂, γ, 분산, 신뢰구간 보정 임계값 t', α = σ(γ(s − t̂)), τ, u
+        info.update(
+            t_hat=float(t_hat), gamma=float(gamma), var_t=float(var_t),
+            t_prime=None if metadata.t_prime is None else float(metadata.t_prime),
+            alpha=float(1.0 / (1.0 + np.exp(-gamma * (similarity_score - t_hat)))),
+            tau=float(tau), u=float(u), reason="tau",
+        )
+        if u <= tau:
+            return _Action.EXPLORE
+        return _Action.EXPLOIT
+
+
 def _l2_normalize_rows(x: np.ndarray) -> np.ndarray:
     """
     L2-normalize a 2D float32 array row-wise (safe for zero rows).
@@ -207,8 +268,11 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         mix_fullcos: bool = False,
         timing_collector=None,
         timing_cuda_sync: bool = False,
+        detail_log: bool = False,
+        seed: Optional[int] = None,
     ):
-        self.bayesian = _Algorithm(delta=delta)
+        # [로그] _LoggedAlgorithm은 판정 규칙이 _Algorithm과 같고, 판정에 쓴 값만 추가로 기록한다
+        self.bayesian = _LoggedAlgorithm(delta=delta, seed=seed)
         self.similarity_evaluator: Optional[SimilarityEvaluator] = None
         self.inference_engine: Optional[InferenceEngine] = None
         self.cache: Optional[Cache] = None
@@ -220,6 +284,16 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         # [추가] 가장 최근 요청에서 vCache가 본 값(s, 판정, t̂, γ 등)을 담아두는 변수.
         #        평가 스크립트가 --log-scores 옵션을 쓰면 요청마다 이 값을 읽어 파일로 저장한다.
         self.last_decision: Optional[dict] = None
+        # [로그] detail_log=True면 요청마다 후보별 점수·판정 내부값·단계별 시간을 last_detail에 남긴다 (실험 로그 B)
+        self.detail_log = bool(detail_log)
+        self.last_detail: Optional[dict] = None
+        self._req_timing: dict = {}
+        self._cand_log = None
+        self._query_tensor_log = None
+        # [로그] 평가 스크립트가 True로 바꾸면 다음 요청 하나에 대해 샘플 진단(C)을 계산해 last_diag에 남긴다
+        self.diag_next = False
+        self.last_diag: Optional[dict] = None
+        self._diag_vecs = np.zeros((0, 0), dtype=np.float32)  # 진단용: HNSW에 저장된 문장 벡터 복사본
 
         # RL splitter instance (expected: vcache.vcache_core.splitter.MaxSimSplitter.MaxSimSplitter)
         self.splitter = splitter
@@ -256,7 +330,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         """
         Lightweight timing context. No-op if no collector is set.
         """
-        if self._timing is None:
+        if self._timing is None and not self.detail_log:
             yield
             return
 
@@ -278,10 +352,17 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         finally:
             _maybe_sync()
             dt = max(0.0, time.perf_counter() - t0)
-            try:
-                self._timing.add(str(name), float(dt))
-            except Exception:
-                pass
+            self._add_req_timing(str(name), float(dt))
+            if self._timing is not None:
+                try:
+                    self._timing.add(str(name), float(dt))
+                except Exception:
+                    pass
+
+    def _add_req_timing(self, name: str, dt: float) -> None:
+        # [로그] 이번 요청 하나의 단계별 시간 합계 (초)
+        if self.detail_log:
+            self._req_timing[name] = self._req_timing.get(name, 0.0) + dt
 
     # [추가] 점수 계산의 공통 입구. 기존에 _maxsim_from_tensors를 직접 부르던 4곳이 모두 이 함수를 거친다.
     #        분할기가 조각별 가중치 함수(segment_weights)를 가지고 있으면 가중치를 넣어 MaxSim을 계산하고,
@@ -464,6 +545,9 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
 
         if self.candidate_selection == "multivector_top_k":
             self._mv_index = _MultiVectorHNSWIndex(max_elements=self._mv_max_elements)
+        # [로그] 분할기가 단계별 시간 훅을 지원하면(규칙 분할기) 요청별 시간 기록에 연결
+        if self.detail_log and hasattr(self.splitter, "timing_hook"):
+            self.splitter.timing_hook = self._add_req_timing
 
     def shutdown(self):
         if self.executor:
@@ -597,6 +681,13 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         if self.splitter is None:
             raise ValueError("VerifiedSplitterDecisionPolicy requires `splitter` (MaxSimSplitter) to be provided.")
 
+        # [로그] 요청마다 기록 초기화
+        self._req_timing = {}
+        self.last_detail = None
+        self.last_diag = None
+        self._cand_log = None
+        self._query_tensor_log = None
+
         # "embedding time": query encoding (LM forward + pooling) inside MaxSimSplitter
         with self._time_block("splitter.encode_text"):
             query_enc = self.splitter.encode_text(prompt)
@@ -606,19 +697,28 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
 
         # NOTE: don't wrap this call in its own timing block because it already contains
         # fine-grained timers (wrapping would double-count in totals).
+        cache_size_before = int(self.cache.vector_db_size()) if self.detail_log else None
         nn_metadata, similarity_score = self._select_nn_by_maxsim_with_query(
             prompt, query_enc, query_knn_emb_cpu
         )
+        if self.diag_next:
+            # [로그] 샘플 진단(C). 이번 요청이 캐시를 바꾸기 전 상태에서 계산한다
+            self.diag_next = False
+            self.last_diag = self._diagnose(query_enc, query_knn_emb_cpu)
         if nn_metadata is None or similarity_score is None:
             # [추가] 비교할 캐시 항목이 없는 요청(캐시가 비어 있음 등)은 기록할 s가 없으므로 None
             self.last_decision = None
-            response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
+            self.bayesian.last_info = None
+            with self._time_block("llm.call"):
+                response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
             self.__cache_add(prompt=prompt, response=response, id_set=id_set)
+            self._finish_detail(query_enc, cache_size_before, None, None)
             return False, response, EmbeddingMetadataObj(embedding_id=-1, response="")
 
         # [추가] 판정 직전에 이 캐시 항목이 가진 (s, c) 관측 개수를 저장 (사전값 2개 포함)
         n_obs_before = len(nn_metadata.observations)
-        action = self.bayesian.select_action(similarity_score=similarity_score, metadata=nn_metadata)
+        with self._time_block("vcache.decide"):
+            action = self.bayesian.select_action(similarity_score=similarity_score, metadata=nn_metadata)
         # Snapshot of what the verified policy saw for this request (read by the eval script
         # when --log-scores is set). t_hat/gamma are the fit used for this decision; they stay
         # None while the entry has too few observations and the policy always explores.
@@ -637,11 +737,16 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             "gamma": None if nn_metadata.gamma is None else float(nn_metadata.gamma),
         }
 
+        self._finish_detail(query_enc, cache_size_before, nn_metadata, action)
+
         match action:
             case _Action.EXPLOIT:
                 return True, nn_metadata.response, nn_metadata
             case _Action.EXPLORE:
-                response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
+                with self._time_block("llm.call"):
+                    response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
+                if self.last_detail is not None:
+                    self.last_detail["timing_s"]["llm.call"] = self._req_timing.get("llm.call", 0.0)
                 self.__update_cache(
                     response=response,
                     nn_metadata=nn_metadata,
@@ -719,6 +824,9 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
 
         best_meta: Optional[EmbeddingMetadataObj] = None
         best_s: float = -1.0
+        # [로그] 후보별 (메타, 최종 점수 s, 후보 조각 텐서)
+        cand_log: list = [] if self.detail_log else None
+        self._query_tensor_log = query_tensor
 
         for meta in candidates:
             cached_prompt = getattr(meta, "prompt", "") or ""
@@ -755,13 +863,145 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             except Exception as e:
                 self.logger.warning(f"MaxSim similarity failed for one candidate: {e}")
                 continue
+            if cand_log is not None:
+                cand_log.append((meta, float(s), cand_tensor if query_tensor is not None else None))
             if s > best_s:
                 best_s = s
                 best_meta = meta
 
+        self._cand_log = cand_log
         if best_meta is None:
             return None, None
         return best_meta, best_s
+
+    # ------------------------------------------------------------------ logging helpers
+    # [로그] 아래 함수들은 detail_log=True일 때만 쓰인다. 점수·판정 결과에는 영향을 주지 않는다.
+
+    def _sentence_vectors(self, ids: list) -> np.ndarray:
+        """Unit vectors the sentence-level HNSW index stores for these embedding ids."""
+        vdb = self.cache.embedding_store.vector_db
+        if not ids or getattr(vdb, "index", None) is None:
+            return np.zeros((0, 0), dtype=np.float32)
+        x = np.asarray(vdb.index.get_items(list(ids)), dtype=np.float32)
+        return _l2_normalize_rows(x)
+
+    @staticmethod
+    def _unit(v) -> np.ndarray:
+        x = np.asarray(v, dtype=np.float32).reshape(1, -1)
+        return _l2_normalize_rows(x)[0]
+
+    def _segment_match(self, query_tensor, cand_tensor) -> dict:
+        """Per-row best match in both directions (log B6). Last row of each side = whole sentence."""
+        import torch.nn.functional as F
+
+        q = F.normalize(query_tensor.detach().float().cpu(), dim=-1)
+        c = F.normalize(cand_tensor.detach().float().cpu(), dim=-1)
+        cos = q @ c.T
+        rmax, rarg = cos.max(dim=1)  # 쿼리 조각마다 후보에서 가장 비슷한 조각
+        cmax, carg = cos.max(dim=0)  # 후보 조각마다 쿼리에서 가장 비슷한 조각
+        return {
+            "query_row_max": [round(float(v), 4) for v in rmax],
+            "query_row_match": [int(v) for v in rarg],
+            "cand_row_max": [round(float(v), 4) for v in cmax],
+            "cand_row_match": [int(v) for v in carg],
+        }
+
+    def _finish_detail(self, query_enc: dict, cache_size_before, nn_metadata, action) -> None:
+        """Assemble last_detail for this request (log B2-B4, B6, B7, B9)."""
+        if not self.detail_log:
+            return
+        cand_log = self._cand_log or []
+        query_tensor = self._query_tensor_log
+        qvec = self._unit(query_enc["pooled_knn"].detach().float().cpu().numpy())
+        vecs = self._sentence_vectors([int(m.embedding_id) for m, _, _ in cand_log])
+        weights_fn = getattr(self.splitter, "segment_weights", None)
+        candidates = []
+        for i, (meta, s, ct) in enumerate(cand_log):
+            candidates.append({
+                "id": int(meta.embedding_id),
+                "prompt": getattr(meta, "prompt", ""),
+                "response": getattr(meta, "response", ""),
+                "id_set": int(getattr(meta, "id_set", -1)),
+                # 코사인: HNSW가 쓰는 문장 벡터 코사인 (재순위 전 기준)
+                "cos": round(float(vecs[i] @ qvec), 5) if len(vecs) else None,
+                # 균등 SMaxSim: 같은 조각, 가중치 없이 / 가중 SMaxSim: 실제로 쓰인 점수
+                "s_uniform": round(float(self._maxsim_from_tensors(query_tensor, ct)), 5) if ct is not None else None,
+                "s_weighted": round(s, 5),
+            })
+        detail = {
+            "cache_size": cache_size_before,
+            "n_query_tokens": int(query_enc["length"]),
+            "candidates": candidates,
+            "selected_id": None if nn_metadata is None else int(nn_metadata.embedding_id),
+            "action": None if action is None else action.value,
+            "decision": self.bayesian.last_info,
+            "split": self.splitter.describe_split(query_enc) if hasattr(self.splitter, "describe_split") else None,
+            "query_weights": None,
+            "segment_match": None,
+            "timing_s": dict(self._req_timing),
+        }
+        if query_tensor is not None and weights_fn is not None:
+            detail["query_weights"] = [round(float(w), 5) for w in weights_fn(query_tensor)]
+        if nn_metadata is not None and query_tensor is not None:
+            best = next((ct for m, _, ct in cand_log if m.embedding_id == nn_metadata.embedding_id), None)
+            if best is not None:
+                detail["segment_match"] = self._segment_match(query_tensor, best)
+        self.last_detail = detail
+
+    def _diagnose(self, query_enc: dict, query_knn_emb_cpu: list) -> Optional[dict]:
+        """Sample diagnostics (log C): HNSW recall, brute-force MVR best, candidate sim matrices."""
+        import torch.nn.functional as F
+
+        n = int(self.cache.vector_db_size())
+        if n == 0:
+            return None
+        k = max(1, int(self.candidate_k))
+        # 1) 정확 검색 Top-K vs HNSW Top-K (같은 문장 벡터 코사인 기준) → HNSW recall
+        have = self._diag_vecs.shape[0]
+        if have < n:
+            new = self._sentence_vectors(list(range(have, n)))
+            self._diag_vecs = new if have == 0 else np.vstack([self._diag_vecs, new])
+        qvec = self._unit(query_knn_emb_cpu)
+        exact = [int(i) for i in np.argsort(-(self._diag_vecs[:n] @ qvec))[:k]]
+        hnsw = [int(i) for _, i in self.cache.get_knn_from_embedding(embedding=query_knn_emb_cpu, k=k)]
+        cand_ids = [int(m.embedding_id) for m, _, _ in (self._cand_log or [])]
+
+        # 2) 캐시 전체를 가중 SMaxSim으로 전수 비교했을 때의 1등 (Top-K 후보 방식이 타당한지 검증)
+        query_tensor = self.splitter.split_text_return_maxsim_tensor_from_encoded(query_enc)
+        best_meta, best_s = None, -1.0
+        for meta in self.cache.get_all_embedding_metadata_objects():
+            ct = getattr(meta, "cached_maxsim_tensor", None)
+            if ct is None:
+                ct = self.splitter.split_text_return_maxsim_tensor(meta.prompt)
+                meta.cached_maxsim_tensor = ct.detach()
+            s = float(self._score_tensors(query_tensor, ct))
+            if s > best_s:
+                best_meta, best_s = meta, s
+
+        # 3) 후보 전체의 조각×조각 코사인 행렬 (행 = 쿼리 조각, 열 = 후보 조각, 마지막 = 문장 전체)
+        q = F.normalize(query_tensor.detach().float().cpu(), dim=-1)
+        matrices = {}
+        for meta, _, ct in self._cand_log or []:
+            if ct is not None:
+                c = F.normalize(ct.detach().float().cpu(), dim=-1)
+                matrices[str(int(meta.embedding_id))] = [[round(float(v), 3) for v in row] for row in (q @ c.T)]
+        return {
+            "k": k,
+            "cache_size": n,
+            "exact_topk": exact,
+            "hnsw_topk": hnsw,
+            "hnsw_recall": len(set(exact) & set(hnsw)) / max(1, len(exact)),
+            "candidate_ids": cand_ids,
+            "candidates_in_exact_topk": len(set(exact) & set(cand_ids)) / max(1, len(exact)),
+            "bruteforce_best": None if best_meta is None else {
+                "id": int(best_meta.embedding_id),
+                "s": round(best_s, 5),
+                "prompt": best_meta.prompt,
+                "response": best_meta.response,
+                "id_set": int(getattr(best_meta, "id_set", -1)),
+            },
+            "sim_matrices": matrices,
+        }
 
     def __update_cache(
         self,
