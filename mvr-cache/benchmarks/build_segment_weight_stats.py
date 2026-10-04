@@ -1,35 +1,30 @@
 """Build the statistics used by RulePunctuationSplitter segment weighting (Step 3a/3b).
 
-Uses a reference slice of the dataset that lies *outside* the evaluation stream
-(default: rows 10000..13000, since evaluations use the first 10000 rows), and writes one
-file with:
+Reads a training split that lies outside the evaluation stream (Classification:
+train/train3k.parquet; evaluation uses test/test41k.parquet) and writes one file with:
 
-  - idf:       [vocab] tensor, log((N + 1) / (df + 1)) + 1 over reference prompts
+  - idf:       [vocab] tensor, log((N + 1) / (df + 1)) + 1 over the training prompts
   - centroid:  [H] mean of L2-normalised rule-split segment embeddings
   - mlp_state: SegmentWeightMLP trained with BCE so that the weighted MaxSim score (the
                eval score with --candidate-selection multivector_top_k --include-full-embedding;
                --mix-fullcos has no effect there) separates correct from incorrect pairs.
-               Pass --mix-fullcos here to reproduce the older, fullcos-mixed training score
-               separates correct from incorrect candidate pairs
+               Pass --mix-fullcos here to reproduce the older, fullcos-mixed training score.
 
 Candidate pairs mirror the cache: each prompt's top-k neighbours by single-vector cosine.
 Anchors are split 80/20 so the MLP is scored on pairs it was not trained on.
 
 Example:
   python benchmarks/build_segment_weight_stats.py \
-    --dataset data/classification.parquet --response-col response_llama_3_8b \
-    --out results/classification_segment_weight_stats.pt
+    --dataset train/train3k.parquet --response-col response_llama_3_8b \
+    --out results/classification_train3k_weight_stats.pt
 """
 # [새 파일] 조각 가중치에 필요한 통계를 만드는 스크립트 (Step 3a, 3b, 5에서 사용하는 .pt 파일 생성)
 #   - idf      : 토큰별 IDF 표 (라벨 사용 안 함)
 #   - centroid : 조각 벡터들의 평균 방향 (라벨 사용 안 함)
 #   - mlp      : 조각 벡터 → 가중치를 내는 작은 신경망 (응답 일치 라벨로 BCE 학습)
 #
-# 주의 1: 위 docstring의 "outside the evaluation stream"은 1만 개 평가 시절 기준이다.
-#         45k 전체를 평가할 때는 이 구간(기본 10000~12999행)도 평가 구간 안에 포함된다.
-# 주의 2: 예전에는 pair_scores가 전체 문장 코사인을 50% 섞은 점수로 학습했는데,
-#         실제 평가(multivector_top_k)는 순수 가중 MaxSim이라 공식이 달랐다.
-#         지금은 기본값이 순수 가중 MaxSim(평가와 동일). 옛 방식은 --mix-fullcos로 재현 가능.
+# 입력은 평가 구간과 겹치지 않는 학습 파일(train/train3k.parquet)을 통째로 쓴다 (기본 --start 0, --n 전체).
+# 학습 점수는 실제 평가(multivector_top_k)와 같은 순수 가중 MaxSim. 옛 50% 혼합 방식은 --mix-fullcos.
 
 from __future__ import annotations
 
@@ -108,13 +103,9 @@ def main() -> None:
     # ---- 명령줄 옵션 ----
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", required=True)  # 데이터 파일
-    p.add_argument(
-        "--start",
-        type=int,
-        default=10000,
-        help="First reference row (after the eval stream).",
-    )
-    p.add_argument("--n", type=int, default=3000)  # 사용할 행 수 (start부터 n개)
+    # [수정] 기본값을 "파일 전체"로 변경 (예전 기본 10000~12999행은 45k 원본 기준이라 train3k에서는 0행이 됨)
+    p.add_argument("--start", type=int, default=0, help="First row to use (default: 0).")
+    p.add_argument("--n", type=int, default=None, help="Rows to use from --start (default: all).")
     p.add_argument("--label-col", default="ID_Set")  # 같은 의미 묶음 열 (response-col이 없을 때 정답 기준)
     p.add_argument("--response-col", default=None)  # 응답 열. 주면 "응답이 같으면 정답 쌍"
     p.add_argument("--k", type=int, default=10)  # 프롬프트마다 이웃 후보 수 (학습 쌍 만들 때)
@@ -134,7 +125,7 @@ def main() -> None:
 
     df = (
         pd.read_parquet(args.dataset)
-        .iloc[args.start : args.start + args.n]
+        .iloc[args.start : (None if args.n is None else args.start + args.n)]
         .reset_index(drop=True)
     )
     prompts = df["prompt"].astype(str).tolist()
@@ -153,7 +144,7 @@ def main() -> None:
 
     # ---- 모든 프롬프트 임베딩 + 규칙 분할 ----
     embedder = EmbeddingModel(device=args.device)
-    # 이거 분할기를 고정으로 만들고 있음
+    # 평가와 같은 규칙 분할기(punctuation_rules.py)로 조각을 만든다
     splitter = RulePunctuationSplitter(
         device=args.device,
         embedding_model=embedder,
