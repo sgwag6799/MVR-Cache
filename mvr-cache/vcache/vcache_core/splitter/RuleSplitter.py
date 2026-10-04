@@ -20,7 +20,8 @@ the same relative influence it has under uniform weighting.
 #
 # 전체 흐름:
 #   1. 문장을 BGE로 한 번 임베딩해서 토큰마다 벡터를 얻는다.
-#   2. 구두점(쉼표, 마침표 등)이 있는 곳마다 전부 자른다. (max_segments=0이면 자르지 않음 → 대조군)
+#   2. 구두점(쉼표, 마침표 등)이 있는 곳마다 자른다. 단, 숫자·약어·URL·이모티콘 안의 구두점은 자르지 않고,
+#      연속 구두점은 한 번만, 빈 조각은 만들지 않는다 (punctuation_rules.py). max_segments=0이면 자르지 않음 → 대조군
 #   3. 잘린 구간마다 토큰 벡터를 평균 내서 "조각 벡터"를 만든다. (원본 MaxSimSplitter 함수 재사용)
 #   4. 조각마다 가중치를 계산해 둔다. vCache 정책이 MaxSim을 계산할 때 이 가중치로 가중 평균을 낸다.
 #
@@ -35,6 +36,7 @@ import torch.nn.functional as F  # 코사인 유사도, softplus 등 함수 모�
 
 from .embedding_model import EmbeddingModel  # BGE 임베딩 모델 래퍼
 from .MaxSimSplitter import MaxSimSplitter  # 원본 RL 분할기 (조각 벡터 만드는 함수를 물려받기 위해 상속)
+from .punctuation_rules import rule_cut_points  # 어디서 자를지 정하는 규칙 1~6
 
 # Same split characters as AdaptedPointerNetworkPolicy._init_punctuation_ids.
 # 자를 수 있는 구두점 목록. RL 분할기가 고를 수 있는 후보 문자와 똑같이 맞췄다 (영문 + 전각 문자).
@@ -53,16 +55,6 @@ def punctuation_positions(input_ids: torch.Tensor, length: int, punct_ids: set) 
     #   - 맨 끝 [SEP] 바로 앞의 구두점(문장 끝 마침표 등)은 잘라도 의미 없는 빈 조각이 생기므로 제외
     ids = input_ids[:length].tolist()  # 텐서 → 파이썬 리스트 (패딩 제외, 실제 길이만큼)
     return [p for p in range(1, length - 2) if ids[p] in punct_ids]
-
-
-def split_points(positions: list, max_segments) -> list:
-    """Cut points for the rule splitter: every punctuation mark, or none when max_segments == 0."""
-    # [수정] 규칙 분할기는 구두점이 있는 곳마다 전부 자른다 (조각 수 제한 없음).
-    #        예전에는 앞에서부터 4개만 잘라서 4번째 구두점 이후가 마지막 조각 하나에 몰렸다.
-    #        max_segments == 0 은 "분할하지 않음"(대조군, --splitter-max-segments 0)으로만 쓴다.
-    if max_segments == 0:
-        return []
-    return list(positions)
 
 
 def segment_spans(length: int, pointers: list) -> list:
@@ -164,7 +156,7 @@ class RulePunctuationSplitter(MaxSimSplitter):
         device="cpu",
         embedding_model=None,
         *,
-        max_segments=None,  # None = 구두점마다 전부 자름(기본), 0 = 자르지 않음(대조군)
+        max_segments=None,  # None = 규칙대로 구두점에서 자름(기본), 0 = 자르지 않음(대조군)
         overlap_tokens: int = 0,  # 조각 경계에서 겹칠 토큰 수 (가중치를 쓰려면 0이어야 함)
         include_full_embedding: bool = False,  # 조각 뒤에 전체 문장 벡터를 한 행 더 붙일지
         weighting: str = "uniform",  # 가중치 방식
@@ -175,7 +167,7 @@ class RulePunctuationSplitter(MaxSimSplitter):
         # 필요한 속성만 직접 설정한다.
         self.device = torch.device(device) if not isinstance(device, torch.device) else device
         if max_segments not in (None, 0):
-            raise ValueError("RulePunctuationSplitter cuts at every punctuation mark; max_segments must be None or 0 (no split).")
+            raise ValueError("RulePunctuationSplitter cuts at punctuation marks by rule; max_segments must be None or 0 (no split).")
         self.max_segments = max_segments
         self.overlap_tokens = max(0, int(overlap_tokens))
         self.include_full_embedding = bool(include_full_embedding)
@@ -241,12 +233,34 @@ class RulePunctuationSplitter(MaxSimSplitter):
         with torch.inference_mode():
             return self._mlp(rows)
 
+    def encode_text(self, text: str) -> dict:
+        # [추가] 부모의 encode_text 결과에 원문과 글자 위치(offset)를 덧붙인다.
+        #        자를지 말지(3.5 / e.g. / www.a.com 등)는 원문을 봐야 판단할 수 있기 때문.
+        enc = super().encode_text(text)
+        tokenized = self.generator.tokenizer(
+            text, truncation=True, max_length=512, return_offsets_mapping=True
+        )
+        enc["text"] = text
+        enc["offsets"] = [tuple(o) for o in tokenized["offset_mapping"]]
+        return enc
+
+    def cut_points(self, enc: dict) -> list:
+        """Token positions to cut at for this encoded prompt (rules in punctuation_rules.py)."""
+        if self.max_segments == 0:
+            return []  # 대조군: 자르지 않음
+        length = int(enc["length"])
+        ids = enc["input_ids"][:length].tolist()
+        offsets = enc.get("offsets")
+        if offsets is None or len(offsets) != length:
+            raise ValueError("RulePunctuationSplitter needs encodings from its own encode_text() (text offsets missing).")
+        return rule_cut_points(enc["text"], offsets, ids, self._punct_ids)
+
     def split_text_return_maxsim_tensor_from_encoded(self, enc: dict):
         # [핵심 함수] 임베딩된 문장(enc) 하나 → 조각 벡터 텐서. 가중치도 함께 계산해 저장해 둔다.
         # enc: encode_text()의 결과 (토큰 번호, 토큰 벡터, 길이 등)
         length = int(enc["length"])  # 실제 토큰 수
-        # 구두점 위치를 모두 찾아 그 위치마다 자른다 (max_segments=0이면 자르지 않음)
-        pointers = split_points(punctuation_positions(enc["input_ids"], length, self._punct_ids), self.max_segments)
+        # 규칙 1~6에 따라 자를 위치를 정한다 (max_segments=0이면 자르지 않음)
+        pointers = self.cut_points(enc)
         # 원본 MaxSimSplitter 함수로 자를 위치에서 조각 벡터(sent)와 전체 문장 벡터(full)를 만든다
         sent, full = self._segment_embeds_from_pointers(
             enc["token_emb"], length, pointers, overlap_tokens=self.overlap_tokens

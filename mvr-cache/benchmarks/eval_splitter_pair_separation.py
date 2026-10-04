@@ -14,7 +14,7 @@ The mvr/maxsim scores are computed for three segmentations, all restricted to th
 punctuation split points the RL policy may choose from:
 
   - learned:  the trained RL splitter
-  - rule:     split at every punctuation mark (excluding the final one), as
+  - rule:     split at punctuation marks by the rules in punctuation_rules.py, as
               RulePunctuationSplitter does
   - random:   per prompt, the same number of boundaries as the learned splitter,
               placed at random punctuation positions (isolates *where* from *how many*)
@@ -50,6 +50,7 @@ from benchmarks.common.comparison import answers_have_same_meaning_static
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 from vcache.vcache_core.splitter.MaxSimSplitter import MaxSimSplitter
 from vcache.vcache_core.splitter.RuleSplitter import PUNCT_CHARS, punctuation_positions
+from vcache.vcache_core.splitter.punctuation_rules import rule_cut_points
 from vcache.vcache_policy.strategies.verified_splitter import VerifiedSplitterDecisionPolicy
 
 
@@ -134,8 +135,13 @@ def main() -> None:
         random_ptrs = sorted(rng.choice(positions, size=n_boundaries, replace=False).tolist()) if n_boundaries else []
         by_variant = {
             "learned": learned,
-            # 규칙: RulePunctuationSplitter와 같이 구두점마다 전부 자름
-            "rule": tensor_from_pointers(enc, positions),
+            # 규칙: RulePunctuationSplitter와 같은 규칙(punctuation_rules.py)으로 자름
+            "rule": tensor_from_pointers(enc, rule_cut_points(
+                text,
+                [tuple(o) for o in tok(text, truncation=True, max_length=512, return_offsets_mapping=True)["offset_mapping"]],
+                enc["input_ids"][: enc["length"]].tolist(),
+                punct_ids,
+            )),
             "random": tensor_from_pointers(enc, random_ptrs),
         }
         for v in variants:

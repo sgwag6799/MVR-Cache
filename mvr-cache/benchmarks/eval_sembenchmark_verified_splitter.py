@@ -295,8 +295,8 @@ def main() -> None:
         "--splitter-max-segments",
         type=int,
         default=None,
-        help="RL splitter: max cut points (default 4). Rule splitter: cuts at every punctuation "
-        "mark by default; pass 0 for the no-split control.",
+        help="RL splitter: max cut points (default 4). Rule splitter: cuts at punctuation marks "
+        "by the rules in punctuation_rules.py; pass 0 for the no-split control.",
     )
     parser.add_argument(
         "--splitter-overlap-tokens",
@@ -557,9 +557,9 @@ def main() -> None:
                 parser.error(f"--segment-weighting {args.segment_weighting} needs --segment-weight-stats")
             weight_stats = torch.load(args.segment_weight_stats, map_location="cpu", weights_only=False)
         # 규칙 분할기 생성. 조각 수·겹침·전체 문장 행 포함 여부는 RL 분할기와 같은 옵션을 그대로 쓴다
-        # [수정] 규칙 분할기는 구두점마다 전부 자른다. --splitter-max-segments는 0(대조군)만 허용
+        # [수정] 규칙 분할기는 punctuation_rules.py 규칙대로 구두점에서 자른다. --splitter-max-segments는 0(대조군)만 허용
         if args.splitter_max_segments not in (None, 0):
-            parser.error("--splitter-mode rule cuts at every punctuation mark; use --splitter-max-segments 0 only for the no-split control")
+            parser.error("--splitter-mode rule cuts at punctuation marks by rule; use --splitter-max-segments 0 only for the no-split control")
         splitter = RulePunctuationSplitter(
             device=args.splitter_device,
             embedding_model=shared_embedder,
