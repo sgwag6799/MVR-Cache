@@ -4,8 +4,6 @@ from typing import List
 # IMPORTANT: This MUST be set before importing huggingface_hub/transformers/sentence-transformers.
 # Otherwise they default to https://huggingface.co and will ignore later env changes.
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-if "hf-mirror.com" not in os.environ.get("HF_ENDPOINT", ""):
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
