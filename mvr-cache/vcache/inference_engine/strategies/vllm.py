@@ -3,7 +3,11 @@ import os
 from typing import Any, Dict, List, Optional
 
 import torch
-from vllm import LLM, RequestOutput, SamplingParams
+
+try:
+    from vllm import LLM, RequestOutput, SamplingParams
+except ImportError:  # vllm is an optional extra; `import vcache` must work without it
+    LLM = RequestOutput = SamplingParams = None
 
 from vcache.inference_engine.inference_engine import InferenceEngine
 
@@ -53,6 +57,10 @@ class VLLMInferenceEngine(InferenceEngine):
             top_k: Top-k sampling parameter (-1 = disabled)
             enforce_eager: Disable CUDA graphs for debugging (uses more memory)
         """
+        if LLM is None:
+            raise ImportError(
+                'VLLMInferenceEngine needs vllm: pip install -e "mvr-cache[vllm]"'
+            )
         super().__init__()
 
         # Store configuration with proper typing
