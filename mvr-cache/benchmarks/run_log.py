@@ -5,11 +5,15 @@ Files written to the run directory:
   run.json         A. one record per run: ids, code/library/hardware, parameters, data
   requests.jsonl   B. one record per test prompt: input, split, candidates and their
                       scores, rank diagnostics, selected neighbour, vCache decision,
-                      outcome, timings
+                      outcome, timings (timing_ms.total excludes the C diagnostics,
+                      which are in timing_ms.diag)
   diag.jsonl       C. sampled prompts only: HNSW recall, brute-force MVR best, candidate
                       segment x segment cosine matrices
   progress.jsonl   D. every --progress-every prompts: running hit / error rate (overall
                       and per task), stored vectors, memory
+  updates.jsonl    one record per observation (s, c) added to a cache entry by the
+                      background update: originating request, request being processed
+                      when it landed, entry, observation counts, newly inserted entry
 
 Definitions
   candidates  what the cache retrieved for the prompt (--candidate-selection / --candidate-k)
@@ -28,6 +32,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict
 from typing import Optional
@@ -176,6 +181,9 @@ class RunLogger:
         self.req_f = open(os.path.join(out_dir, "requests.jsonl"), "w", encoding="utf-8")
         self.diag_f = open(os.path.join(out_dir, "diag.jsonl"), "w", encoding="utf-8")
         self.prog_f = open(os.path.join(out_dir, "progress.jsonl"), "w", encoding="utf-8")
+        # updates.jsonl은 백그라운드 스레드에서 쓰므로 잠금을 둔다
+        self.upd_f = open(os.path.join(out_dir, "updates.jsonl"), "w", encoding="utf-8")
+        self._upd_lock = threading.Lock()
         self.n = 0
         self.hits = 0
         self.false_hits = 0
@@ -243,13 +251,15 @@ class RunLogger:
         self.header["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         self.header.update(extra)
         self._dump_header()
-        for f in (self.req_f, self.diag_f, self.prog_f):
-            f.close()
+        with self._upd_lock:
+            for f in (self.req_f, self.diag_f, self.prog_f, self.upd_f):
+                f.close()
 
     # ---------------------------------------------------------------- B. 프롬프트 단위
     def log_request(self, *, order: int, row: dict, prompt: str, in_train: Optional[bool],
                     detail: Optional[dict], correct_fn, prompt_info: dict,
-                    is_hit: bool, false_hit: bool, total_s: float) -> None:
+                    is_hit: bool, false_hit: bool, total_s: float, diag_s: float = 0.0) -> None:
+        # total_s: 요청 처리 시간(진단 제외), diag_s: 이번 요청에서 샘플 진단(C)에 쓴 시간
         task = row.get("dataset_name")
         raw = (detail or {}).get("candidates", [])
         cands = [
@@ -264,6 +274,8 @@ class RunLogger:
         action = None if detail is None else detail.get("action")
         timing = {k: round(v * 1000, 3) for k, v in ((detail or {}).get("timing_s") or {}).items()}
         timing["total"] = round(total_s * 1000, 3)
+        if diag_s:
+            timing["diag"] = round(diag_s * 1000, 3)
         rec = {
             # B1 식별·입력
             "order": order,
@@ -325,6 +337,13 @@ class RunLogger:
         }
         self.diag_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
+    # ---------------------------------------------------------------- 관측 추가 기록
+    def log_update(self, rec: dict) -> None:
+        """Called from the policy's background update thread (one line per observation)."""
+        with self._upd_lock:
+            if not self.upd_f.closed:
+                self.upd_f.write(json.dumps(rec) + "\n")
+
     # ---------------------------------------------------------------- D. 주기 기록
     def maybe_progress(self, *, cache_vectors: int, multivector_vectors: Optional[int]) -> None:
         if self.progress_every <= 0 or self.n % self.progress_every != 0:
@@ -353,3 +372,5 @@ class RunLogger:
         # 중간 저장: 파일 버퍼를 디스크에 내려 둔다
         for f in (self.req_f, self.diag_f, self.prog_f):
             f.flush()
+        with self._upd_lock:
+            self.upd_f.flush()

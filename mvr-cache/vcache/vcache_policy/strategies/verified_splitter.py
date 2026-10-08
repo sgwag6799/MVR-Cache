@@ -49,7 +49,7 @@ class _LoggedAlgorithm(_Algorithm):
             "var_t_before": getattr(metadata, "var_t", None),
             "t_prime_before": metadata.t_prime,
             "t_hat": None, "gamma": None, "var_t": None, "t_prime": None,
-            "alpha": None, "tau": None, "u": None, "reason": None,
+            "alpha": None, "alpha_tprime": None, "tau": None, "u": None, "reason": None,
         }
         self.last_info = info
         similarities = np.array([obs[0] for obs in metadata.observations])
@@ -72,11 +72,15 @@ class _LoggedAlgorithm(_Algorithm):
         self.tau_latencies.append(time.time() - start_time)
 
         u = self._rng.uniform(0, 1) if self._rng is not None else random.uniform(0, 1)
-        # 판정 후 값: 이번에 적합한 t̂, γ, 분산, 신뢰구간 보정 임계값 t', α = σ(γ(s − t̂)), τ, u
+        # 판정 후 값: 이번에 적합한 t̂, γ, 분산, 신뢰구간 보정 임계값 t', τ, u
+        #   alpha        = σ(γ(s − t̂))  (보정 전 임계값 기준)
+        #   alpha_tprime = σ(γ(s − t′))  (τ 계산에 실제로 쓰인 보정 임계값 기준)
+        t_prime = None if metadata.t_prime is None else float(metadata.t_prime)
         info.update(
             t_hat=float(t_hat), gamma=float(gamma), var_t=float(var_t),
-            t_prime=None if metadata.t_prime is None else float(metadata.t_prime),
+            t_prime=t_prime,
             alpha=float(1.0 / (1.0 + np.exp(-gamma * (similarity_score - t_hat)))),
+            alpha_tprime=None if t_prime is None else float(1.0 / (1.0 + np.exp(-gamma * (similarity_score - t_prime)))),
             tau=float(tau), u=float(u), reason="tau",
         )
         if u <= tau:
@@ -293,7 +297,15 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         # [로그] 평가 스크립트가 True로 바꾸면 다음 요청 하나에 대해 샘플 진단(C)을 계산해 last_diag에 남긴다
         self.diag_next = False
         self.last_diag: Optional[dict] = None
+        # [로그] 이번 요청의 진단(C) 소요 시간(초). 평가 스크립트가 요청 시간(total)에서 빼고 timing_ms.diag로 따로 기록
+        self.last_diag_s: float = 0.0
+        self._in_diag = False
         self._diag_vecs = np.zeros((0, 0), dtype=np.float32)  # 진단용: HNSW에 저장된 문장 벡터 복사본
+        # [로그] 관측 추가 기록(updates.jsonl). 평가 스크립트가 요청 번호(request_order)와 기록 함수(update_hook)를 넣는다.
+        #        update_hook은 백그라운드 스레드에서 불린다.
+        self.request_order: Optional[int] = None
+        self.update_hook = None
+        self._main_thread_id: Optional[int] = None
 
         # RL splitter instance (expected: vcache.vcache_core.splitter.MaxSimSplitter.MaxSimSplitter)
         self.splitter = splitter
@@ -353,16 +365,20 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             _maybe_sync()
             dt = max(0.0, time.perf_counter() - t0)
             self._add_req_timing(str(name), float(dt))
-            if self._timing is not None:
+            if self._timing is not None and not self._in_diag:
                 try:
                     self._timing.add(str(name), float(dt))
                 except Exception:
                     pass
 
     def _add_req_timing(self, name: str, dt: float) -> None:
-        # [로그] 이번 요청 하나의 단계별 시간 합계 (초)
-        if self.detail_log:
-            self._req_timing[name] = self._req_timing.get(name, 0.0) + dt
+        # [로그] 이번 요청 하나의 단계별 시간 합계 (초).
+        #        진단(C) 중의 시간과, 백그라운드 스레드(캐시 추가 시 조각 계산)의 시간은 이 요청의 단계별 시간에 넣지 않는다.
+        if not self.detail_log or self._in_diag:
+            return
+        if self._main_thread_id is not None and threading.get_ident() != self._main_thread_id:
+            return
+        self._req_timing[name] = self._req_timing.get(name, 0.0) + dt
 
     # [추가] 점수 계산의 공통 입구. 기존에 _maxsim_from_tensors를 직접 부르던 4곳이 모두 이 함수를 거친다.
     #        분할기가 조각별 가중치 함수(segment_weights)를 가지고 있으면 가중치를 넣어 MaxSim을 계산하고,
@@ -682,9 +698,11 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             raise ValueError("VerifiedSplitterDecisionPolicy requires `splitter` (MaxSimSplitter) to be provided.")
 
         # [로그] 요청마다 기록 초기화
+        self._main_thread_id = threading.get_ident()
         self._req_timing = {}
         self.last_detail = None
         self.last_diag = None
+        self.last_diag_s = 0.0
         self._cand_log = None
         self._query_tensor_log = None
 
@@ -702,9 +720,16 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             prompt, query_enc, query_knn_emb_cpu
         )
         if self.diag_next:
-            # [로그] 샘플 진단(C). 이번 요청이 캐시를 바꾸기 전 상태에서 계산한다
+            # [로그] 샘플 진단(C). 이번 요청이 캐시를 바꾸기 전 상태에서 계산한다.
+            #        걸린 시간은 last_diag_s로 따로 남겨 요청 시간에서 뺀다 (단계별 시간에도 넣지 않음)
             self.diag_next = False
-            self.last_diag = self._diagnose(query_enc, query_knn_emb_cpu)
+            diag_t0 = time.perf_counter()
+            self._in_diag = True
+            try:
+                self.last_diag = self._diagnose(query_enc, query_knn_emb_cpu)
+            finally:
+                self._in_diag = False
+                self.last_diag_s = time.perf_counter() - diag_t0
         if nn_metadata is None or similarity_score is None:
             # [추가] 비교할 캐시 항목이 없는 요청(캐시가 비어 있음 등)은 기록할 s가 없으므로 None
             self.last_decision = None
@@ -1024,6 +1049,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             nn_metadata.response,
             label_id_set,
             nn_metadata.id_set,
+            self.request_order,
         )
 
     def __submit_for_background_update(
@@ -1035,6 +1061,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         cached_response: str,
         label_id_set: int,
         nn_id_set: int,
+        request_order: Optional[int] = None,
     ):
         if self.similarity_evaluator is None or self.callback_queue is None:
             return
@@ -1051,6 +1078,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                 embedding_id,
                 prompt,
                 label_id_set,
+                request_order,
             )
         )
 
@@ -1062,6 +1090,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             embedding_id,
             prompt,
             id_set,
+            request_order,
         ) = update_args
 
         if self.cache is None:
@@ -1075,6 +1104,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         if latest_metadata_object is None:
             return
 
+        n_obs_before = len(latest_metadata_object.observations)
         try:
             self.bayesian.add_observation_to_metadata(
                 similarity_score=similarity_score,
@@ -1084,8 +1114,25 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         except (ValueError, KeyError):
             return
 
+        inserted_id = None
         if not should_have_exploited:
-            self.__cache_add(prompt=prompt, response=new_response, id_set=id_set)
+            inserted_id = self.__cache_add(prompt=prompt, response=new_response, id_set=id_set)
+
+        # [로그] 관측 추가 기록 (updates.jsonl). 판정 규칙·캐시 상태에는 영향 없음
+        if self.update_hook is not None:
+            try:
+                self.update_hook({
+                    "order": request_order,  # 이 관측을 만든 요청 번호 (requests.jsonl의 order)
+                    "applied_at_order": self.request_order,  # 실제로 반영된 시점에 처리 중이던 요청 번호
+                    "entry_id": int(embedding_id),
+                    "s": round(float(similarity_score), 3),  # 저장되는 값과 같은 반올림
+                    "c": int(bool(should_have_exploited)),
+                    "n_obs_before": n_obs_before,  # 사전값 2개 포함
+                    "n_obs_after": len(latest_metadata_object.observations),
+                    "inserted_entry_id": None if inserted_id is None else int(inserted_id),
+                })
+            except Exception as e:
+                self.logger.warning(f"update log failed: {e}")
 
         try:
             self.cache.update_metadata(

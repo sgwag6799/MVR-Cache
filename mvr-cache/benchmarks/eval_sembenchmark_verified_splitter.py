@@ -865,6 +865,8 @@ def main() -> None:
                 extra={"candidate_k": int(candidate_k)},
             )
             diag_rng = random.Random(args.seed)
+            # 백그라운드에서 관측 (s, c)가 캐시 항목에 추가될 때마다 updates.jsonl에 한 줄씩 기록
+            policy.update_hook = run_logger.log_update
 
         hits = 0
         tp = fp = tn = fn = 0
@@ -921,13 +923,16 @@ def main() -> None:
                 if run_logger is not None and diag_rng.random() < float(args.diag_frac):
                     policy.diag_next = True
 
+                policy.request_order = n + 1  # [로그] updates.jsonl에서 관측을 만든 요청을 가리키는 번호
                 step_t0 = time.time()
                 is_hit, resp, resp_meta, nn_meta = vcache.infer_with_cache_info(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     id_set=id_set,
                 )
-                step_latency = time.time() - step_t0
+                # [로그] 샘플 진단(C)에 쓴 시간은 요청 시간에서 빼고 따로 기록 (진단 안 한 요청은 0)
+                diag_s = float(getattr(policy, "last_diag_s", 0.0) or 0.0)
+                step_latency = time.time() - step_t0 - diag_s
 
                 n += 1
                 hits += int(is_hit)
@@ -991,7 +996,7 @@ def main() -> None:
                         order=n, row=r, prompt=str(prompt),
                         in_train=None if train_prompts is None else str(prompt) in train_prompts,
                         detail=policy.last_detail, correct_fn=correct_fn, prompt_info=prompt_info,
-                        is_hit=bool(is_hit), false_hit=bool(d_fp), total_s=step_latency,
+                        is_hit=bool(is_hit), false_hit=bool(d_fp), total_s=step_latency, diag_s=diag_s,
                     )
                     run_logger.log_diag(order=n, task=r.get("dataset_name"), diag=policy.last_diag, correct_fn=correct_fn)
                     mv = getattr(policy, "_mv_index", None)

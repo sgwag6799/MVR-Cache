@@ -1,10 +1,15 @@
 # 실험 로그 — 결정할 사항
 
-브랜치: `gpu-production` (커밋 `d8bfd55` 기준)
+브랜치: `gpu-production` (커밋 `d8bfd55` 기준으로 작성, 2026-10-08 결정 반영)
 관련 코드: `mvr-cache/benchmarks/run_log.py`, `mvr-cache/benchmarks/analyze_run_log.py`,
 `mvr-cache/vcache/vcache_policy/strategies/verified_splitter.py`
 
-각 항목: 현재 동작 → 문제/주의 → 선택지 (추천에 ★)
+각 항목: 현재 동작 → 문제/주의 → 선택지 (추천에 ★, 결정된 항목은 [x])
+
+**결정 현황 (2026-10-08)**
+- 결정·구현 완료: 3번(`updates.jsonl`, `alpha_tprime`), 4번(진단 시간 분리)
+- 이번에 적용 안 함: 5번(용량 줄이기) — 회당 약 150MB 그대로
+- 아직 결정 대기: 1번(후보 방식), 2번(코사인 정의), 6번(run.json 칸). 현재 Colab 실행 명령은 1번 ★안(`top_k --candidate-k 20 --use-cached-candidate-segments`)으로 돌리고 있음
 
 ---
 
@@ -37,9 +42,15 @@
 - 이번 요청의 (s, c)가 추가된 직후의 상태는 기록되지 않음 (그 항목의 다음 판정에서 보임).
 
 선택지
-- [ ] 관측 추가 시점 로그 `updates.jsonl` 추가 (요청 번호, 항목 id, s, c, 추가 전후 관측 수)
-- [ ] α를 t′ 기준으로도 함께 기록 (`alpha_tprime`)
+- [x] 관측 추가 시점 로그 `updates.jsonl` 추가 (요청 번호, 항목 id, s, c, 추가 전후 관측 수)
+- [x] α를 t′ 기준으로도 함께 기록 (`alpha_tprime`)
 - [ ] 현재대로
+
+구현 (2026-10-08)
+- `updates.jsonl`: 백그라운드가 관측 (s, c)를 항목에 추가할 때마다 한 줄. 필드 `order`(관측을 만든 요청 번호 = requests.jsonl의 order),
+  `applied_at_order`(실제로 반영될 때 처리 중이던 요청 번호 → 비동기 지연 확인용), `entry_id`, `s`(저장값과 같은 소수 3자리),
+  `c`, `n_obs_before`/`n_obs_after`(사전값 2개 포함), `inserted_entry_id`(오답이라 새로 캐시에 넣은 항목, 없으면 null)
+- `decision.alpha_tprime` = σ(γ(s − t′)). `alpha`(t̂ 기준)는 그대로 둠. 판정 규칙은 바뀌지 않음
 
 ## 4. C 샘플 진단
 
@@ -48,9 +59,14 @@
 - 진단 시간이 그 요청의 `timing_ms.total`에 섞임 → 시간 분석 시 진단 샘플 제외 필요.
 
 선택지
-- 샘플 비율: [ ] ★ 0.01  [ ] 0.02  [ ] 0.05
-- [ ] ★ 진단 시간을 `timing_ms.diag`로 따로 기록하고 total에서 분리
+- 샘플 비율: [x] ★ 0.01 (Colab 실행 명령에서 `--diag-frac 0.01`, 스크립트 기본값은 0.02 그대로)  [ ] 0.02  [ ] 0.05
+- [x] ★ 진단 시간을 `timing_ms.diag`로 따로 기록하고 total에서 분리
 - [ ] 전수 비교를 GPU 배치 계산으로 속도 개선
+
+구현 (2026-10-08)
+- 진단 시간을 따로 재서 `timing_ms.total`(과 결과 JSON의 지연 시간 목록)에서 빼고, 진단한 요청에만 `timing_ms.diag`로 기록
+- 진단 중의 단계별 시간과, 백그라운드 스레드(캐시 추가 때 조각 계산)의 시간은 그 요청의 단계별 `timing_ms`에 넣지 않음
+  (이전에는 백그라운드 작업 시간이 그때 처리 중이던 요청의 단계별 시간에 섞일 수 있었음)
 
 ## 5. requests.jsonl 용량
 
@@ -61,6 +77,8 @@
 - [ ] ★ 조각 텍스트는 조건과 무관하므로 별도 파일에 한 번만 저장, requests에는 조각 수·토큰 수만
 - [ ] ★ gzip 압축 저장 (`requests.jsonl.gz`)
 - [ ] 현재대로
+
+결정 (2026-10-08): 이번에는 적용하지 않음 (회당 약 150MB, 27회 약 4GB — Drive 여유 공간 확인 필요). `updates.jsonl`은 회당 수 MB 수준 추가
 
 ## 6. run.json 분할기 설정 칸
 
@@ -73,6 +91,6 @@
 
 ## 7. 아직 안 한 것 (참고)
 
-- 실제 평가 실행으로 로그 전체를 검증하지 않음 (기록·집계 로직만 가짜 데이터로 확인)
-  → Colab에서 `--max-samples 300` 정도로 먼저 돌려 확인 필요
+- ~~실제 평가 실행으로 로그 전체를 검증하지 않음~~ → 2026-10-08 Colab T4에서 `--max-samples 300` 시범 실행으로 기록·집계(A~D, F) 동작 확인.
+  단, 이때는 균등(가중치 없음) 조건이었고 위 3·4번 구현 전 코드라 `updates.jsonl`·`alpha_tprime`·`timing_ms.diag`와 가중치 관련 칸은 다시 확인 필요
 - 가중치 통계(IDF·centroid·MLP)는 train(train/train.parquet)으로 아직 만들지 않음 (GPU에서 실행 예정)
