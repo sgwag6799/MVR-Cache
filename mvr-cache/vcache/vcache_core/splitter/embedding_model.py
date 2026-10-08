@@ -3,8 +3,49 @@ import os
 # Allow users to opt into a mirror, but keep the release portable by default.
 os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
 
+import threading
+
 from transformers import AutoModel, AutoTokenizer
-import torch  
+import torch
+
+
+class _LockedTokenizer:
+    """Serializes every call into one shared Hugging Face fast tokenizer.
+
+    The cache's background update thread tokenizes newly added entries while the main
+    thread tokenizes the next request. Concurrent calls on the same fast tokenizer raise
+    "RuntimeError: Already borrowed" (huggingface/tokenizers#537), which silently dropped
+    candidates from MaxSim scoring and segment caching.
+    """
+
+    def __init__(self, tokenizer):
+        object.__setattr__(self, "_tok", tokenizer)
+        object.__setattr__(self, "_lock", threading.RLock())
+
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            return self._tok(*args, **kwargs)
+
+    def __getattr__(self, name):
+        if name in ("_tok", "_lock"):
+            raise AttributeError(name)
+        attr = getattr(self._tok, name)
+        if not callable(attr):
+            return attr
+        lock = self._lock
+
+        def locked(*args, **kwargs):
+            with lock:
+                return attr(*args, **kwargs)
+
+        return locked
+
+    def __setattr__(self, name, value):
+        setattr(self._tok, name, value)
+
+    def __len__(self):
+        return len(self._tok)
+
 
 class EmbeddingModel:
     """ 计算文本的向量嵌入 """
@@ -36,6 +77,8 @@ class EmbeddingModel:
             print(f"[INFO] Loading model {model_name} from {os.environ.get('HF_ENDPOINT')}")
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModel.from_pretrained(model_name)
+
+        self.tokenizer = _LockedTokenizer(self.tokenizer)
 
         # Move model to specified device if provided
         if device is not None:
