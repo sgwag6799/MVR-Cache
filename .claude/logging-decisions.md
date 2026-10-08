@@ -75,4 +75,4 @@
 
 - 실제 평가 실행으로 로그 전체를 검증하지 않음 (기록·집계 로직만 가짜 데이터로 확인)
   → Colab에서 `--max-samples 300` 정도로 먼저 돌려 확인 필요
-- 가중치 통계(IDF·centroid·MLP)는 train3k로 아직 만들지 않음 (GPU에서 실행 예정)
+- 가중치 통계(IDF·centroid·MLP)는 train(train/train.parquet)으로 아직 만들지 않음 (GPU에서 실행 예정)

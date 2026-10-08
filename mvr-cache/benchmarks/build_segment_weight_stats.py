@@ -1,7 +1,7 @@
 """Build the statistics used by RulePunctuationSplitter segment weighting (Step 3a/3b).
 
 Reads a training split that lies outside the evaluation stream (Classification:
-train/train3k.parquet; evaluation uses test/test41k.parquet) and writes one file with:
+train/train.parquet; evaluation uses test/test41k.parquet) and writes one file with:
 
   - idf:       [vocab] tensor, log((N + 1) / (df + 1)) + 1 over the training prompts
   - centroid:  [H] mean of L2-normalised rule-split segment embeddings
@@ -15,15 +15,15 @@ Anchors are split 80/20 so the MLP is scored on pairs it was not trained on.
 
 Example:
   python benchmarks/build_segment_weight_stats.py \
-    --dataset train/train3k.parquet --response-col response_llama_3_8b \
-    --out results/classification_train3k_weight_stats.pt
+    --dataset train/train.parquet --response-col response_llama_3_8b \
+    --out results/classification_train_weight_stats.pt
 """
 # [새 파일] 조각 가중치에 필요한 통계를 만드는 스크립트 (Step 3a, 3b, 5에서 사용하는 .pt 파일 생성)
 #   - idf      : 토큰별 IDF 표 (라벨 사용 안 함)
 #   - centroid : 조각 벡터들의 평균 방향 (라벨 사용 안 함)
 #   - mlp      : 조각 벡터 → 가중치를 내는 작은 신경망 (응답 일치 라벨로 BCE 학습)
 #
-# 입력은 평가 구간과 겹치지 않는 학습 파일(train/train3k.parquet)을 통째로 쓴다 (기본 --start 0, --n 전체).
+# 입력은 평가 구간과 겹치지 않는 학습 파일(train/train.parquet)을 통째로 쓴다 (기본 --start 0, --n 전체).
 # 학습 점수는 실제 평가(multivector_top_k)와 같은 순수 가중 MaxSim. 옛 50% 혼합 방식은 --mix-fullcos.
 
 from __future__ import annotations
