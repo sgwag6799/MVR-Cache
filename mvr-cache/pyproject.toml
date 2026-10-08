@@ -33,14 +33,23 @@ dependencies = [
     "lightning (>=2.5.0,<3.0.0)",
     "torchrl (>=0.10.0,<0.11.0)",
     "rl4co",
-    "vllm (>=0.10.0,<0.11.0)",
     "tensordict (>=0.10.0,<0.11.0)",
 ]
+
+[project.optional-dependencies]
+# Only needed for live generation via VLLMInferenceEngine (benchmarks/benchmark.py). It pins its own
+# torch version and replaces the preinstalled one, so it is opt-in: pip install -e "mvr-cache[vllm]"
+vllm = ["vllm (>=0.10.0,<0.11.0)"]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.poetry]
+# The distribution is named mvr-cache but the import package is vcache/.
+packages = [{ include = "vcache" }]
 
 
 [tool.poetry.group.benchmarks.dependencies]
