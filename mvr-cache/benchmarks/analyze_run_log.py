@@ -134,7 +134,14 @@ def main() -> None:
 
     rows = []
     for d in args.run_dirs:
+        if not os.path.exists(os.path.join(d, "run.json")) or not os.path.exists(os.path.join(d, "requests.jsonl")):
+            print(f"skip {d}: no run.json / requests.jsonl (the run did not start)")
+            continue
         header, reqs, diags = load(d)
+        if not reqs:
+            # 평가가 첫 요청 전에 멈춘 실행 (requests.jsonl이 비어 있음)
+            print(f"skip {d}: requests.jsonl is empty (the run stopped before the first prompt)")
+            continue
         cond = header.get("condition") or header.get("run_id") or os.path.basename(d.rstrip("/"))
         groups = {"ALL": (reqs, diags)}
         for task in sorted({r["task"] for r in reqs if r.get("task") is not None}):
@@ -142,8 +149,10 @@ def main() -> None:
         for task, (rq, dg) in groups.items():
             rows.append({"run_dir": d, "condition": cond, "repeat": header.get("repeat"), "task": task, **metrics(rq, dg)})
 
+    if not rows:
+        return
     df = pd.DataFrame(rows)
-    flat = df.drop(columns=["delta_over_sigma_by_segment"])
+    flat = df.drop(columns=["delta_over_sigma_by_segment"], errors="ignore")
     with pd.option_context("display.max_columns", None, "display.width", 200):
         print(flat.to_string(index=False))
     if args.out:
