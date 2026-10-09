@@ -195,7 +195,6 @@ os.environ.update(HF_ENDPOINT="https://huggingface.co", HF_CACHE_BASE="/content/
 D = "/content/drive/MyDrive/dialects"
 TRAIN, VAL = f"{D}/data/training", f"{D}/data/validation"   # zip으로 올렸다면 zip 경로
 PREP, RES = f"{D}/prepared", f"{D}/results"
-os.makedirs(RES, exist_ok=True)
 MODELS = ["BAAI/bge-base-en-v1.5", "BAAI/bge-m3"]
 STREAMS = ["repeat", "zipf"]          # "cold"는 전체 데이터에서 236만 행이라 제외
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -205,6 +204,7 @@ q = lambda paths: " ".join(f'"{p}"' for p in paths)
 for p in (TRAIN, VAL):
     assert os.path.exists(p), f"{p} 이(가) 없습니다. 위의 D/TRAIN/VAL을 Drive의 실제 경로로 고쳐 주세요: {os.listdir(D) if os.path.isdir(D) else os.listdir('/content/drive/MyDrive')}"
 print("Training:", TRAIN, "\nValidation:", VAL)
+os.makedirs(RES, exist_ok=True)
 
 # 1) 가공 (Drive 폴더에서 JSON 7,665개를 읽음, 첫 실행은 10~20분 걸릴 수 있음)
 if REBUILD or not os.path.exists(f"{PREP}/stream_repeat.parquet"):
