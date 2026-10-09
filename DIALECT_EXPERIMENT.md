@@ -69,16 +69,16 @@
 
 압축을 푼 **폴더**를 올려도 되고 **zip**을 올려도 된다(스크립트가 폴더는 하위 폴더까지 `.json`을 찾고, zip은 안의 JSON을 직접 읽는다). 폴더로 올리면 작은 파일 1만 5천 개라 업로드와 첫 가공(Drive에서 파일을 하나씩 읽음)이 느리지만, 가공은 한 번만 하면 된다.
 
-현재 배치 (압축을 풀어 폴더로 올림):
+현재 배치 (AI Hub 폴더 구조 그대로 올림, **zip을 읽음**):
 ```
+MyDrive/014.한국어 방언 발화 데이터(경상도)/01.데이터/
+├─ 1.Training/(new3)라벨링데이터/(비식별화완료)경상도_학습데이터_1.zip   ← TRAIN
+└─ 2.Validation/(new3)라벨링데이터/(비식별화완료)경상도_학습데이터_2.zip ← VAL
 MyDrive/dialects/
-├─ data/
-│   ├─ training/     ← Training 라벨 (.json + .txt, 하위 폴더가 있어도 됨)
-│   └─ validation/   ← Validation 라벨
 ├─ prepared/   ← 셀 2가 만듦 (가공 데이터, 약 260MB)
 └─ results/    ← 셀 2가 만듦 (결과)
 ```
-셀 2 맨 위의 `D`, `TRAIN`, `VAL`이 이 경로를 가리킨다. zip으로 올렸다면 `TRAIN`, `VAL`에 zip 경로를 넣으면 된다(macOS가 zip에 넣는 `__MACOSX/`, `._*` 파일은 스크립트가 건너뛴다). 샘플로 돌렸던 예전 파일(`MyDrive/dialect/`)은 남겨 둬도 된다.
+같은 곳에 풀어 둔 폴더가 있어도 zip을 쓴다. zip은 원본 그대로라 빠진 파일이 없고, Drive에서 큰 파일 하나를 읽는 편이 작은 파일 수천 개를 읽는 것보다 훨씬 빠르다. 폴더를 쓰려면 `TRAIN`, `VAL`에 폴더 경로를 넣으면 된다(하위 폴더까지 `.json`을 찾고, macOS의 `__MACOSX/`, `._*` 파일은 건너뜀). 샘플로 돌렸던 예전 파일(`MyDrive/dialect/`)은 남겨 둬도 된다.
 
 ### 2.3 git에 올리지 않는 이유
 AI Hub 이용약관상 재배포가 제한되고, 화자 정보(나이·성별·출생지 등)가 들어 있으며, 이 저장소는 공개 저장소다. `.gitignore`가 `mvr-cache/data/` 아래의 방언 데이터(`원천데이터/`, `라벨링데이터/`, `*경상도*/` 폴더, `*.zip`, 가공 결과 `dialect/`)와 `*.wav`를 막는다.
@@ -167,7 +167,7 @@ HNSW 차원은 첫 벡터로 정해지므로 1024차원도 코드 수정 없이 
 
 `gpu-production` 실험이 돌고 있는 런타임과 **같은 런타임에서 돌리지 말 것**(같은 이름의 패키지를 다른 폴더로 다시 설치하므로 돌던 실험의 코드가 바뀜). **GPU 런타임 필요**(T4 기준으로 맞춤. CPU로는 문장 236만 개 인코딩에 너무 오래 걸림).
 
-**준비:** 2.2절대로 Training·Validation 라벨을 Drive `MyDrive/dialects/data/training/`, `.../validation/`에 올린다.
+**준비:** AI Hub에서 받은 라벨 zip 두 개를 Drive에 올리고, 셀 2의 `TRAIN`, `VAL`이 그 zip을 가리키게 한다(2.2절).
 
 ### 셀 1: 설치 (끝나면 자동 재시작)
 ```python
@@ -193,7 +193,9 @@ os.kill(os.getpid(), 9)
 import os, glob, json, torch
 os.environ.update(HF_ENDPOINT="https://huggingface.co", HF_CACHE_BASE="/content/hf_cache", USE_TF="0")
 D = "/content/drive/MyDrive/dialects"
-TRAIN, VAL = f"{D}/data/training", f"{D}/data/validation"   # zip으로 올렸다면 zip 경로
+L = "/content/drive/MyDrive/014.한국어 방언 발화 데이터(경상도)/01.데이터"   # AI Hub 폴더 구조 그대로
+TRAIN = f"{L}/1.Training/(new3)라벨링데이터/(비식별화완료)경상도_학습데이터_1.zip"
+VAL   = f"{L}/2.Validation/(new3)라벨링데이터/(비식별화완료)경상도_학습데이터_2.zip"
 PREP, RES = f"{D}/prepared", f"{D}/results"
 MODELS = ["BAAI/bge-base-en-v1.5", "BAAI/bge-m3"]
 STREAMS = ["repeat", "zipf"]          # "cold"는 전체 데이터에서 236만 행이라 제외
@@ -206,7 +208,7 @@ for p in (TRAIN, VAL):
 print("Training:", TRAIN, "\nValidation:", VAL)
 os.makedirs(RES, exist_ok=True)
 
-# 1) 가공 (Drive 폴더에서 JSON 7,665개를 읽음, 첫 실행은 10~20분 걸릴 수 있음)
+# 1) 가공 (zip 안의 JSON을 직접 읽음, 수 분)
 if REBUILD or not os.path.exists(f"{PREP}/stream_repeat.parquet"):
     !python benchmarks/dialect/prepare_dialect_dataset.py --train "{TRAIN}" --val "{VAL}" --out-dir "{PREP}"
 print(json.dumps({k: v for k, v in json.load(open(f"{PREP}/manifest.json")).items() if k != "cleaning"}, ensure_ascii=False, indent=1))
@@ -233,7 +235,7 @@ for s in STREAMS:
 - `results/retrieval_<모델>.json` : 인코더별 요약(all·train·val·calibrated) / `results/retrieval_BAAI__<모델>.csv` : 질의별 상세
 - `results/vcache_<스트림>_<모델>.json` : vCache 실행 결과 (요청별 hit/tp/fp/fn) / `results/vcache_<스트림>_summary.csv` : kind × variant 집계
 
-**예상 시간 (T4, 추정):** 가공 10~20분(Drive 폴더에서 읽기) / 검색 실험 bge-base-en 약 20분, bge-m3 약 1시간(문장 236만 개 인코딩이 대부분) / vCache `repeat`(2.7만 요청) 인코더당 약 20분, `zipf`(5만 요청) 인코더당 30~40분 → 합계 약 3~4시간. 각 단계가 끝날 때마다 Drive에 저장되므로 세션이 끊겨도 이어서 돌릴 수 있다(단, 돌고 있던 단계는 처음부터).
+**예상 시간 (T4, 추정):** 가공 수 분 / 검색 실험 bge-base-en 약 20분, bge-m3 약 1시간(문장 236만 개 인코딩이 대부분) / vCache `repeat`(2.7만 요청) 인코더당 약 20분, `zipf`(5만 요청) 인코더당 30~40분 → 합계 약 3~4시간. 각 단계가 끝날 때마다 Drive에 저장되므로 세션이 끊겨도 이어서 돌릴 수 있다(단, 돌고 있던 단계는 처음부터).
 
 ## 6. 변경한 파일 (main 대비)
 
