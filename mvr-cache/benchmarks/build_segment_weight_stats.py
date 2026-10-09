@@ -88,6 +88,19 @@ def pair_scores(rows, mask, full_nocls, ai, bi, seg_w, mix_fullcos=False):
     return 0.5 * (maxsim01 + fullcos01)
 
 
+def pair_scores_chunked(rows, mask, full_nocls, ai, bi, seg_w, mix_fullcos=False, chunk=1024):
+    """pair_scores for many pairs (no-grad evaluation), `chunk` pairs at a time.
+
+    Scoring all pairs at once copies rows[ai] and rows[bi] ([pairs, segments, 768] each,
+    several times): for the 24,000 train pairs this ran Colab out of RAM and the process was
+    killed. Each pair's score is independent, so the result is the same.
+    """
+    return torch.cat([
+        pair_scores(rows, mask, full_nocls, ai[i : i + chunk], bi[i : i + chunk], seg_w, mix_fullcos)
+        for i in range(0, len(ai), chunk)
+    ])
+
+
 # 모든 프롬프트의 모든 행에 대해 MLP 가중치를 계산 (평가 때 RuleSplitter가 하는 것과 같은 규칙)
 def rows_weights(mlp, rows, mask, n_seg):
     """MLP weights for segment rows; the full row gets the mean segment weight."""
@@ -272,7 +285,7 @@ def main() -> None:
         # [로그 E] 에폭마다 val BCE·AUC 계산, val AUC가 가장 높은 에폭의 MLP를 최종으로 선택
         with torch.no_grad():
             w = rows_weights(mlp, rows, mask, n_seg)
-            vs = pair_scores(rows, mask, full_nocls, va, vb, w, args.mix_fullcos)
+            vs = pair_scores_chunked(rows, mask, full_nocls, va, vb, w, args.mix_fullcos)
             val_bce = float(F.binary_cross_entropy_with_logits(calib[0] * vs + calib[1], vy, pos_weight=pos_weight))
             val_auc = float(roc_auc_score(vy.numpy(), vs.numpy()))
         train_log["epochs"].append({
@@ -303,10 +316,10 @@ def main() -> None:
         mlp_w = rows_weights(mlp, rows, mask, n_seg)
     for name, (a, b, yy) in pairs.items():
         auc_u = roc_auc_score(
-            yy.numpy(), pair_scores(rows, mask, full_nocls, a, b, uniform_w, args.mix_fullcos).numpy()
+            yy.numpy(), pair_scores_chunked(rows, mask, full_nocls, a, b, uniform_w, args.mix_fullcos).numpy()
         )
         auc_m = roc_auc_score(
-            yy.numpy(), pair_scores(rows, mask, full_nocls, a, b, mlp_w, args.mix_fullcos).numpy()
+            yy.numpy(), pair_scores_chunked(rows, mask, full_nocls, a, b, mlp_w, args.mix_fullcos).numpy()
         )
         print(f"{name} AUC  uniform {auc_u:.4f}  mlp {auc_m:.4f}")
         train_log.setdefault("final_auc", {})[name] = {"uniform": round(float(auc_u), 5), "mlp": round(float(auc_m), 5)}
