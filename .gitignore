@@ -29,3 +29,10 @@ hf_cache/
 
 rl-training-algorithm/models/
 mvr-cache/benchmarks/results/
+
+# Dialect experiment: AI Hub 경상방언 data must not be committed (license + speaker voice/personal info;
+# this repository is public). Keep the raw data and anything derived from it on Google Drive.
+mvr-cache/data/원천데이터/
+mvr-cache/data/라벨링데이터/
+mvr-cache/data/dialect/
+*.wav

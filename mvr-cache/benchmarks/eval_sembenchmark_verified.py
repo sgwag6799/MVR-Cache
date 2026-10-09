@@ -217,6 +217,12 @@ def main() -> None:
         help="Device for live BGE embedding calculation (e.g. cpu, cuda).",
     )
     parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help="Hugging Face id or local path of the sentence encoder (default: BAAI/bge-base-en-v1.5, "
+             "or BGE_MODEL_PATH). e.g. BAAI/bge-m3 for Korean data.",
+    )
+    parser.add_argument(
         "--sleep",
         type=float,
         default=0.002,
@@ -485,7 +491,7 @@ def main() -> None:
 
     # Shared components across deltas
     # Use live BGE embeddings to match the splitter's base model
-    shared_embedder = EmbeddingModel(device=args.device)
+    shared_embedder = EmbeddingModel(model_name=args.embedding_model, device=args.device)
     embedding_engine = BGEEmbeddingEngine(embedding_model=shared_embedder)
 
     if args.similarity_evaluator == "string":
