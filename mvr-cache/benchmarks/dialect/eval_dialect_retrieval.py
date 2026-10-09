@@ -36,33 +36,66 @@ import torch.nn.functional as F
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 
 
-def embed(model: EmbeddingModel, texts: list, batch_size: int, device) -> torch.Tensor:
-    """Unit vectors for `texts`; batches are formed by length to waste less padding."""
+def embed(model: EmbeddingModel, texts: list, batch_size: int, device, label: str) -> torch.Tensor:
+    """Unit vectors for `texts`, stored as float16 on `device` (2M x 1024 float32 would not fit a T4).
+
+    Encoding itself runs in float32 like vCache; batches are formed by length to waste less padding.
+    """
     order = np.argsort([len(t) for t in texts])
-    out = torch.empty(len(texts), model.model.config.hidden_size)
+    out = torch.empty(len(texts), model.model.config.hidden_size, dtype=torch.float16, device=device)
+    t0, step = time.time(), max(1, len(texts) // 10)
     for i in range(0, len(texts), batch_size):
         idx = order[i : i + batch_size]
-        out[torch.as_tensor(idx)] = model.get_embeddings_tensor([texts[j] for j in idx]).float().cpu()
-    return F.normalize(out, dim=-1).to(device)
+        v = F.normalize(model.get_embeddings_tensor([texts[j] for j in idx]).float(), dim=-1)
+        out[torch.as_tensor(idx, device=device)] = v.to(device=device, dtype=torch.float16)
+        if (i // batch_size) % max(1, step // batch_size) == 0:
+            print(f"  encode {label}: {min(i + batch_size, len(texts)):,}/{len(texts):,} ({time.time() - t0:.0f}s)", flush=True)
+    return out
 
 
-def score_queries(q: torch.Tensor, idx: torch.Tensor, own: np.ndarray, rand: np.ndarray, chunk: int) -> dict:
-    """Own / best-wrong / top-1 / rank / random cosine per query, `chunk` queries at a time."""
-    res = {k: [] for k in ("own", "wrong", "wrong_i", "top1", "top1_i", "rank", "rand")}
-    for s in range(0, len(q), chunk):
-        sims = q[s : s + chunk] @ idx.T  # [chunk, index]
-        rows = torch.arange(sims.shape[0], device=sims.device)
-        o = torch.as_tensor(own[s : s + chunk], device=sims.device)
-        own_s = sims[rows, o]
-        top1_s, top1_i = sims.max(dim=1)
-        rank = (sims > own_s.unsqueeze(1)).sum(dim=1) + 1
-        rand_s = sims[rows, torch.as_tensor(rand[s : s + chunk], device=sims.device)]
-        sims[rows, o] = -2.0
-        wrong_s, wrong_i = sims.max(dim=1)
-        for k, v in (("own", own_s), ("wrong", wrong_s), ("wrong_i", wrong_i), ("top1", top1_s),
-                     ("top1_i", top1_i), ("rank", rank), ("rand", rand_s)):
-            res[k].append(v.cpu())
-    return {k: torch.cat(v).numpy() for k, v in res.items()}
+def score_queries(q: torch.Tensor, idx: torch.Tensor, own: np.ndarray, rand: np.ndarray,
+                  chunk: int, block: int) -> dict:
+    """Own / best-wrong / top-1 / rank / random cosine per query against the whole cache.
+
+    The cache is walked in `block`-row pieces (cast to float32) and the queries in `chunk`-row pieces,
+    so memory stays at about chunk x block floats however large the cache is.
+    """
+    dev, n_q, n_i = q.device, len(q), len(idx)
+    own_t, rand_t = torch.as_tensor(own, device=dev), torch.as_tensor(rand, device=dev)
+    own_s = torch.empty(n_q, device=dev)
+    rand_s = torch.empty(n_q, device=dev)
+    for s in range(0, n_q, chunk):
+        qc = q[s : s + chunk].float()
+        own_s[s : s + chunk] = (qc * idx[own_t[s : s + chunk]].float()).sum(-1)
+        rand_s[s : s + chunk] = (qc * idx[rand_t[s : s + chunk]].float()).sum(-1)
+    greater = torch.zeros(n_q, dtype=torch.long, device=dev)
+    top1_s = torch.full((n_q,), -9.0, device=dev)
+    top1_i = torch.zeros(n_q, dtype=torch.long, device=dev)
+    wrong_s = torch.full((n_q,), -9.0, device=dev)
+    wrong_i = torch.zeros(n_q, dtype=torch.long, device=dev)
+    for b0 in range(0, n_i, block):
+        blk = idx[b0 : b0 + block].float()
+        for s in range(0, n_q, chunk):
+            e = min(s + chunk, n_q)
+            sims = q[s:e].float() @ blk.T  # [queries, block]
+            m, a = sims.max(dim=1)
+            upd = m > top1_s[s:e]
+            top1_s[s:e] = torch.where(upd, m, top1_s[s:e])
+            top1_i[s:e] = torch.where(upd, a + b0, top1_i[s:e])
+            # 정답 문장이 이 구간에 있으면 지운 뒤 "정답보다 높은 오답 수"와 "가장 비슷한 오답"을 센다
+            o = own_t[s:e] - b0
+            inb = (o >= 0) & (o < blk.shape[0])
+            rows = torch.nonzero(inb).squeeze(1)
+            sims[rows, o[rows]] = -9.0
+            greater[s:e] += (sims > own_s[s:e].unsqueeze(1)).sum(dim=1)
+            m, a = sims.max(dim=1)
+            upd = m > wrong_s[s:e]
+            wrong_s[s:e] = torch.where(upd, m, wrong_s[s:e])
+            wrong_i[s:e] = torch.where(upd, a + b0, wrong_i[s:e])
+        print(f"  score: cache rows {min(b0 + block, n_i):,}/{n_i:,}", flush=True)
+    out = {"own": own_s, "wrong": wrong_s, "wrong_i": wrong_i, "top1": top1_s, "top1_i": top1_i,
+           "rank": greater + 1, "rand": rand_s}
+    return {k: v.cpu().numpy() for k, v in out.items()}
 
 
 def auc(pos: np.ndarray, neg: np.ndarray) -> float:
@@ -120,7 +153,8 @@ def main() -> None:
     p.add_argument("--models", nargs="+", default=["BAAI/bge-base-en-v1.5", "BAAI/bge-m3"])
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--chunk", type=int, default=512, help="Queries scored against the whole cache at once.")
+    p.add_argument("--chunk", type=int, default=1024, help="Queries scored at once.")
+    p.add_argument("--block", type=int, default=262144, help="Cache rows scored at once (cast to float32).")
     p.add_argument("--target-errors", nargs="+", type=float, default=[0.01, 0.05])
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-queries", type=int, default=None, help="Use only the first N queries (quick check).")
@@ -147,9 +181,9 @@ def main() -> None:
     for name in args.models:
         t0 = time.time()
         model = EmbeddingModel(model_name=name, device=args.device)
-        idx_vec = embed(model, index["text"].tolist(), args.batch_size, args.device)
-        q_vec = embed(model, pairs["dialect"].tolist(), args.batch_size, args.device)
-        r = score_queries(q_vec, idx_vec, own, rand, args.chunk)
+        idx_vec = embed(model, index["text"].tolist(), args.batch_size, args.device, "cache")
+        q_vec = embed(model, pairs["dialect"].tolist(), args.batch_size, args.device, "queries")
+        r = score_queries(q_vec, idx_vec, own, rand, args.chunk, args.block)
 
         df = pairs.copy()
         df["own_cos"], df["best_wrong_cos"], df["random_cos"] = r["own"], r["wrong"], r["rand"]

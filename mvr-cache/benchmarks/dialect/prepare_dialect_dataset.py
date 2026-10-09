@@ -19,6 +19,9 @@ Outputs under --out-dir (keep it out of git: the data is licensed and this repos
   stream_zipf.parquet  vCache stream with repeated requests: query pairs drawn with Zipf popularity,
                        each request in the dialect or the standard form, plus one-off standard
                        sentences as a long tail. `kind` = first / exact_repeat / cross_variant
+  stream_repeat.parquet  vCache stream of real repetition only: every utterance whose standard
+                       sentence was spoken at least --repeat-min times, as actually spoken (the
+                       dialect transcription), plus one-off sentences as a long tail
   manifest.json        counts, cleaning rules, how often meanings really repeat in the data
 
 id_set = group of the standard sentence, so benchmark_id_set scoring works on both streams.
@@ -63,16 +66,24 @@ def key(text: str) -> str:
     return re.sub(r"[^\w]", "", text)
 
 
+def is_label_json(name: str) -> bool:
+    # macOS가 압축할 때 넣는 __MACOSX/ 폴더와 ._파일명(리소스 포크)은 이름만 .json이고 JSON이 아니다
+    base = os.path.basename(name)
+    return name.lower().endswith(".json") and "__MACOSX" not in name and not base.startswith("._")
+
+
 def iter_label_files(paths: list):
     """Yield parsed label JSON dicts from folders (recursive) and/or .zip files."""
     for path in paths:
         if os.path.isdir(path):
             for f in sorted(glob.glob(os.path.join(path, "**", "*.json"), recursive=True)):
-                with open(f, encoding="utf-8") as fh:
+                if not is_label_json(f):
+                    continue
+                with open(f, encoding="utf-8-sig") as fh:
                     yield json.load(fh)
         elif zipfile.is_zipfile(path):
             with zipfile.ZipFile(path) as zf:
-                for name in sorted(n for n in zf.namelist() if n.lower().endswith(".json")):
+                for name in sorted(n for n in zf.namelist() if is_label_json(n)):
                     with zf.open(name) as fh:
                         yield json.loads(fh.read().decode("utf-8-sig"))
         else:
@@ -91,6 +102,8 @@ def load_utterances(paths: list, split: str) -> list:
                 "split": split,
                 "utt_id": u.get("id"),
                 "file_id": d.get("id"),
+                # 파일 ID 접두어: DKSR / DKCI (Training에는 둘 다, Validation에는 DKSR만 있음)
+                "source": str(d.get("id") or "")[:4],
                 "topic": topic,
                 "dialect": clean(u.get("dialect_form")),
                 "standard": clean(u.get("standard_form")),
@@ -121,7 +134,10 @@ def main() -> None:
     p.add_argument("--zipf-requests", type=int, default=50000, help="Length of stream_zipf (0 = skip).")
     p.add_argument("--zipf-a", type=float, default=1.1, help="Zipf exponent of request popularity.")
     p.add_argument("--zipf-dialect-prob", type=float, default=0.5, help="Share of repeated-meaning requests sent in dialect form.")
-    p.add_argument("--zipf-singleton-frac", type=float, default=0.3, help="Share of requests that are one-off standard sentences.")
+    p.add_argument("--zipf-singleton-frac", type=float, default=0.3,
+                   help="Share of requests that are one-off standard sentences (stream_zipf and stream_repeat).")
+    p.add_argument("--repeat-min", type=int, default=6,
+                   help="stream_repeat keeps meanings whose standard sentence was really spoken at least this often.")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
     train_paths = list(args.train or []) + ([args.label_dir] if args.label_dir else [])
@@ -163,7 +179,7 @@ def main() -> None:
             continue
         k, dk = key(u["standard"]), key(u["dialect"])
         rows.append({
-            **{c: u[c] for c in ("split", "utt_id", "file_id", "topic", "dialect", "standard", "n_eojeol", "n_dialect_eojeol")},
+            **{c: u[c] for c in ("split", "source", "utt_id", "file_id", "topic", "dialect", "standard", "n_eojeol", "n_dialect_eojeol")},
             "group_id": gid[k],
             "dialect_ratio": u["n_dialect_eojeol"] / u["n_eojeol"] if u["n_eojeol"] else None,
             # 표면 유사도: 방언형과 표준어형이 글자 수준에서 얼마나 비슷한지 (1 = 같음)
@@ -215,12 +231,34 @@ def main() -> None:
     counts = collections.Counter(key(u["standard"]) for u in utts if key(u["standard"]) and len(u["standard"].split()) >= args.min_eojeol)
     repeat_stats = {f">={n}": sum(c >= n for c in counts.values()) for n in (2, 6, 20)}
 
+    # ---- stream_repeat: 실제로 여러 번 말해진 의미(표준어 문장 --repeat-min회 이상)만, 실제 발화(방언 전사)로 ----
+    rep_keys = {k for k, c in counts.items() if c >= args.repeat_min}
+    repeat = None
+    if rep_keys:
+        rrows = []
+        for u in utts:
+            k = key(u["standard"])
+            if k in rep_keys and u["dialect"]:
+                rrows.append({"prompt": u["dialect"], "id_set": gid[k],
+                              "variant": "dialect" if key(u["dialect"]) != k else "standard", "id": u["utt_id"]})
+        one_singles = index[index["n_utterances"] == 1]
+        n_single = int(round(len(rrows) * args.zipf_singleton_frac / (1 - args.zipf_singleton_frac))) if len(one_singles) else 0
+        one_off = one_singles.sample(n=min(n_single, len(one_singles)), random_state=args.seed)
+        rrows += [{"prompt": t, "id_set": int(g), "variant": "standard", "id": f"std{g}"}
+                  for g, t in zip(one_off["group_id"], one_off["text"])]
+        repeat = pd.DataFrame(rrows).sample(frac=1.0, random_state=args.seed).reset_index(drop=True)
+        repeat["dataset_name"] = "dialect_gyeongsang"
+        repeat["kind"] = kinds(repeat)
+    top_repeated = [{"text": groups[k]["text"], "count": c} for k, c in counts.most_common(15)]
+
     os.makedirs(args.out_dir, exist_ok=True)
     index.to_parquet(os.path.join(args.out_dir, "index.parquet"), index=False)
     pairs.to_parquet(os.path.join(args.out_dir, "pairs.parquet"), index=False)
     cold.to_parquet(os.path.join(args.out_dir, "stream_cold.parquet"), index=False)
     if zipf is not None:
         zipf.to_parquet(os.path.join(args.out_dir, "stream_zipf.parquet"), index=False)
+    if repeat is not None:
+        repeat.to_parquet(os.path.join(args.out_dir, "stream_repeat.parquet"), index=False)
     manifest = {
         "source": "AI Hub 한국어 방언 발화 데이터(경상도) label JSON",
         "train_inputs": train_paths,
@@ -228,9 +266,17 @@ def main() -> None:
         "n_utterances": {s: sum(u["split"] == s for u in utts) for s in ("train", "val")},
         "n_index_sentences": len(index),
         "n_query_pairs": pairs["split"].value_counts().to_dict() if len(pairs) else {},
+        "n_query_pairs_by_source": {f"{s}/{src}": int(n) for (s, src), n in pairs.groupby(["split", "source"]).size().items()} if len(pairs) else {},
         "dropped_pairs": dict(dropped),
         "n_dialect_matches_other_standard": int(pairs["dialect_matches_other_standard"].sum()) if len(pairs) else 0,
         "standard_sentences_repeated": repeat_stats,
+        "most_repeated_standard_sentences": top_repeated,
+        "stream_repeat": None if repeat is None else {
+            "rows": len(repeat), "kind": repeat["kind"].value_counts().to_dict(),
+            "variant": repeat["variant"].value_counts().to_dict(),
+            "repeated_meanings": len(rep_keys), "repeat_min": args.repeat_min,
+            "singleton_frac": args.zipf_singleton_frac,
+        },
         "stream_cold": {"rows": len(cold), "kind": cold["kind"].value_counts().to_dict()},
         "stream_zipf": None if zipf is None else {
             "rows": len(zipf), "kind": zipf["kind"].value_counts().to_dict(),

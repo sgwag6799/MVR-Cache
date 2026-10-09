@@ -35,4 +35,6 @@ mvr-cache/benchmarks/results/
 mvr-cache/data/원천데이터/
 mvr-cache/data/라벨링데이터/
 mvr-cache/data/dialect/
+mvr-cache/data/*경상도*/
+mvr-cache/data/*.zip
 *.wav
