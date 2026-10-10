@@ -154,7 +154,9 @@ AI Hub 이용약관상 재배포가 제한되고, 화자 정보(나이·성별·
 - **함정 추가:** 원저자 학습 방식(`anchor_nn`)은 각 문장을 그 문장의 가장 가까운 이웃과 짝지어 학습한다. 이 데이터에서는 가장 가까운 이웃이 거의 항상 같은 뜻의 짝(방언↔표준어)이라 학습 쌍이 거의 전부 정답이 된다(작은 모델로 시험했을 때 정답 쌍 비율 100%). 그래서 검색 실험(셀 2)에서 찾은 **각 질의의 가장 비슷한 오답 문장**(`retrieval_BAAI__bge-m3.csv`의 `best_wrong_text`)을 별도 의미로 함께 넣는다(시험 시 정답 쌍 비율 62.5%).
 - **평가와 분리:** vCache 스트림(`repeat`, `zipf`)에 나오는 의미는 학습 문장으로도 함정으로도 쓰지 않는다.
 
-**학습 설정:** `gpu-production`에서 돌렸던 Step 4 설정과 같다(`--policy_mode separate --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --bce_auto_balance --precompute_token_embeddings`). 라벨은 `--label_mode id_set`(같은 표준어 문장 그룹이면 정답). 검증 보상(`val/reward`)이 5번 연속(25 epoch) 0.01 이상 오르지 않으면 조기 종료.
+**학습 설정:** `gpu-production`에서 돌렸던 Step 4 설정과 같고, 분할기 기준 이웃 재계산만 5 epoch마다로 줄였다(`--nn_rebuild_every_n_epochs 5`, 원래 매 epoch). 웜업(5 epoch) 뒤에는 이웃 재계산이 학습 문장 1.5만 개마다 bge-m3를 따로 돌려서, 매 epoch 하면 epoch당 수십 분이 걸렸다(실측: epoch 5~9를 1시간 47분 동안 못 넘김). 공통 설정: `--policy_mode separate --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --bce_auto_balance --precompute_token_embeddings`). 라벨은 `--label_mode id_set`(같은 표준어 문장 그룹이면 정답). 검증 보상(`val/reward`)이 5번 연속(25 epoch) 0.01 이상 오르지 않으면 조기 종료, 최대 50 epoch.
+
+**체크포인트:** 원저자 코드는 학습하지 않는 인코더를 분할기 안에 두 벌(본체 + 비교용 사본) 저장해서 bge-m3에서는 개당 약 7GB다. 학습 중에는 Colab 로컬에 두고, 끝나면 `benchmarks/dialect/slim_rl_checkpoint.py`가 분할기 가중치(`policy.*`, 인코더 `policy.lm.*` 제외)만 Drive에 저장한다. `MaxSimSplitter`는 인코더를 `--embedding-model`에서 불러오므로 빠진 `lm.*`을 허용한다.
 
 **평가 설정:** `eval_sembenchmark_verified_splitter.py`로 `repeat`, `zipf` 스트림을 돌린다. 단일 벡터 HNSW로 후보 20개(`--candidate-k 20`)를 뽑고 MaxSim으로 다시 순위를 매김(조각 최대 4개 + 문장 전체 벡터, `--include-full-embedding`, 캐시 항목의 조각은 저장해 두고 재사용). 재사용 판단은 vCache verified(δ=0.01) 그대로. 같은 스트림의 Vanilla vCache(bge-m3, 셀 2) 결과와 나란히 집계한다.
 
@@ -260,8 +262,10 @@ os.environ.update(HF_ENDPOINT="https://huggingface.co", HF_CACHE_BASE="/content/
 D = "/content/drive/MyDrive/dialects"
 PREP, RES = f"{D}/prepared", f"{D}/results"
 ENC, TAG = "BAAI/bge-m3", "bge-m3"
-CKPT = f"{D}/rl_ckpt_{TAG}"            # 학습된 분할기 (Drive에 저장)
-RL_EPOCHS = 100                       # 조기 종료가 없으면 최대 이만큼. 세션이 짧으면 줄일 것 (RL 학습은 이어서 못 함)
+CKPT = f"{D}/rl_ckpt_{TAG}"            # 줄인 분할기만 Drive에 (수십 MB)
+LOCAL_CKPT = f"/content/rl_ckpt_{TAG}" # 학습 중 체크포인트는 Colab 로컬에 (개당 약 7GB: 고정 인코더가 두 벌 들어감)
+RL_EPOCHS = 50                        # 조기 종료가 없으면 최대 이만큼 (RL 학습은 이어서 못 함)
+NN_EVERY = 5                          # 분할기 기준 이웃 재계산 주기(epoch). 1이면 epoch마다 수십 분
 STREAMS = ["repeat", "zipf"]
 NEG = f"{RES}/retrieval_BAAI__{TAG}.csv"
 assert os.path.exists(NEG), f"{NEG} 없음: 셀 2의 bge-m3 검색 실험을 먼저 끝내 주세요"
@@ -270,12 +274,14 @@ assert os.path.exists(NEG), f"{NEG} 없음: 셀 2의 bge-m3 검색 실험을 먼
 if not os.path.exists(f"{PREP}/rl_train.parquet"):
     !python benchmarks/dialect/make_dialect_rl_data.py --data-dir "{PREP}" --train-groups 5000 --val-groups 500 --hard-negatives "{NEG}"
 
-# 2) RL 분할기 학습 (끊기면 처음부터)
+# 2) RL 분할기 학습 (끊기면 처음부터) → 필요한 가중치만 Drive에 저장
 if not os.path.exists(f"{CKPT}/DONE"):
-    shutil.rmtree(CKPT, ignore_errors=True)
-    !cd ../rl-training-algorithm && python RL4COTrainer.py --gpu_id 0 --embedding_model {ENC} --max_len 64 --train_parquet "{PREP}/rl_train.parquet" --val_parquet "{PREP}/rl_val.parquet" --parquet_text_column prompt --label_mode id_set --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --max_epochs {RL_EPOCHS} --check_val_every_n_epoch 5 --policy_mode separate --punctuation_only --split_at_word_ends --bce_auto_balance --precompute_token_embeddings --save_weights_only --seed 0 --checkpoint_dir "{CKPT}"
-    assert glob.glob(f"{CKPT}/*.ckpt"), "RL 학습 실패: 위 출력의 에러 확인"
-    open(f"{CKPT}/DONE", "w").write(f"max_epochs={RL_EPOCHS}\n")
+    shutil.rmtree(CKPT, ignore_errors=True)       # 예전 7GB 체크포인트도 지움 (Drive 휴지통 비우기 필요)
+    shutil.rmtree(LOCAL_CKPT, ignore_errors=True)
+    !cd ../rl-training-algorithm && python RL4COTrainer.py --gpu_id 0 --embedding_model {ENC} --max_len 64 --train_parquet "{PREP}/rl_train.parquet" --val_parquet "{PREP}/rl_val.parquet" --parquet_text_column prompt --label_mode id_set --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --nn_rebuild_every_n_epochs {NN_EVERY} --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --max_epochs {RL_EPOCHS} --check_val_every_n_epoch 5 --policy_mode separate --punctuation_only --split_at_word_ends --bce_auto_balance --precompute_token_embeddings --save_weights_only --seed 0 --checkpoint_dir "{LOCAL_CKPT}"
+    assert glob.glob(f"{LOCAL_CKPT}/*.ckpt"), "RL 학습 실패: 위 출력의 에러 확인"
+    !python benchmarks/dialect/slim_rl_checkpoint.py --src "{LOCAL_CKPT}" --out-dir "{CKPT}"
+    open(f"{CKPT}/DONE", "w").write(f"max_epochs={RL_EPOCHS} nn_every={NN_EVERY}\n")
 print("checkpoint:", sorted(os.listdir(CKPT)))
 
 # 3) MVR-cache 평가 (스트림별) → Vanilla vCache(bge-m3)와 나란히 집계
@@ -320,7 +326,8 @@ for s in STREAMS:
 | `rl-training-algorithm/RL4COTrainer.py` | 수정 | `--embedding_model`(인코더 선택, 정책 폭 = 인코더 차원), `--max_len`(기본 512 그대로), `--split_at_word_ends` 옵션 추가. 주지 않으면 기존과 같음 |
 | `rl-training-algorithm/AdaptedPointerNetworkPolicy.py` | 수정 | `split_at_word_ends`: 어절의 마지막 토큰을 자르는 위치 후보에 추가 |
 | `mvr-cache/vcache/vcache_core/splitter/AdaptedPointerNetworkPolicy.py` | 수정 | 추론 쪽에도 같은 `split_at_word_ends` 규칙 |
-| `mvr-cache/vcache/vcache_core/splitter/MaxSimSplitter.py` | 수정 | 정책 폭을 768 고정 대신 인코더 차원으로, `split_at_word_ends` 전달 |
+| `mvr-cache/vcache/vcache_core/splitter/MaxSimSplitter.py` | 수정 | 정책 폭을 768 고정 대신 인코더 차원으로, `split_at_word_ends` 전달, 인코더 가중치(`lm.*`)가 없는 줄인 체크포인트 허용 |
+| `mvr-cache/benchmarks/dialect/slim_rl_checkpoint.py` | 새 파일 | RL 체크포인트(약 7GB)에서 분할기 가중치만 남겨 저장 |
 | `mvr-cache/benchmarks/eval_sembenchmark_verified_splitter.py` | 수정 | `--embedding-model`, `--splitter-split-at-word-ends` 옵션 추가. 주지 않으면 기존과 같음 |
 | `DIALECT_EXPERIMENT.md` | 새 파일 | 이 문서 |
 

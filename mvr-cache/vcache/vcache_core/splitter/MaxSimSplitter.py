@@ -193,7 +193,9 @@ class MaxSimSplitter:
             unexpected = list(getattr(incompatible, "unexpected_keys", []))
             if missing:
                 # Allow env.* keys to be missing (env is not part of the learned splitter itself).
-                non_env_missing = [k for k in missing if not k.startswith("env.")]
+                # lm.* is the frozen encoder, already loaded from `embedding_model`; slimmed
+                # checkpoints (benchmarks/dialect/slim_rl_checkpoint.py) leave it out.
+                non_env_missing = [k for k in missing if not k.startswith(("env.", "lm."))]
                 if non_env_missing:
                     raise RuntimeError(
                         "Checkpoint is missing required policy weights (non-env). "
