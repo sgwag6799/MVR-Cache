@@ -279,6 +279,18 @@ def main() -> None:
              "Set to 1 to allow 1-token overlap.",
     )
     parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help="Hugging Face id or local path of the encoder (default: BAAI/bge-base-en-v1.5, or BGE_MODEL_PATH). "
+             "Must be the encoder the splitter checkpoint was trained with, e.g. BAAI/bge-m3.",
+    )
+    parser.add_argument(
+        "--splitter-split-at-word-ends",
+        action="store_true",
+        help="Also allow the last token of every word as a split point. Use for checkpoints trained with "
+             "RL4COTrainer --split_at_word_ends (e.g. Korean transcripts with little punctuation).",
+    )
+    parser.add_argument(
         "--include-full-embedding",
         action="store_true",
         help=(
@@ -497,7 +509,7 @@ def main() -> None:
         )
     run_grid = [(float(d), int(k)) for d in deltas for k in candidate_ks]
 
-    shared_embedder = EmbeddingModel(device=args.splitter_device)
+    shared_embedder = EmbeddingModel(model_name=args.embedding_model, device=args.splitter_device)
     embedding_engine = BGEEmbeddingEngine(embedding_model=shared_embedder)
     splitter = MaxSimSplitter(
         checkpoint_path=args.splitter_checkpoint,
@@ -506,6 +518,7 @@ def main() -> None:
         max_segments=int(args.splitter_max_segments),
         overlap_tokens=int(args.splitter_overlap_tokens),
         include_full_embedding=bool(args.include_full_embedding),
+        split_at_word_ends=bool(args.splitter_split_at_word_ends),
     )
 
     if args.similarity_evaluator == "string":

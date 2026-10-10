@@ -861,10 +861,31 @@ if __name__ == '__main__':
         ),
     )
     parser.add_argument(
+        "--embedding_model",
+        default=None,
+        help="Hugging Face id or local path of the encoder (default: BAAI/bge-base-en-v1.5 or BGE_MODEL_PATH). "
+             "e.g. BAAI/bge-m3 for Korean. The policy width follows the encoder's hidden size.",
+    )
+    parser.add_argument(
+        "--max_len",
+        type=int,
+        default=512,
+        help="Token length prompts are padded/truncated to. Shorter is much lighter for "
+             "--precompute_token_embeddings (N x max_len x hidden fp16 on the GPU).",
+    )
+    parser.add_argument(
         "--split_on_space",
         action="store_true",
         default=False,
         help="If set, treat whitespace/word-boundary tokens as additional split delimiters (in addition to punctuation/connector words).",
+    )
+    parser.add_argument(
+        "--split_at_word_ends",
+        action="store_true",
+        default=False,
+        help="Also allow the last token of every word as a split point, so segments are whole words "
+             "(use for text with little punctuation, e.g. Korean transcripts). Unlike --split_on_space, "
+             "never cuts inside a word.",
     )
     parser.add_argument(
         "--split_words_before",
@@ -989,7 +1010,7 @@ if __name__ == '__main__':
     test_prompts = load_prompts_from_file(args.test_file) if (test_pairs is None and args.test_file) else None
     
   
-    MAX_LEN = 512 # 文本最大长度
+    MAX_LEN = int(args.max_len)  # 文本最大长度
     MAX_SEGMENTS = 8  # 最大分割片段数
     TRAIN_DATA_SIZE_AVAILABLE = _infer_dataset_size(pairs=train_pairs, prompts=train_prompts, parquet_path=args.train_parquet)
     VAL_DATA_SIZE_AVAILABLE = _infer_dataset_size(pairs=val_pairs, prompts=val_prompts, parquet_path=args.val_parquet)
@@ -1033,7 +1054,8 @@ if __name__ == '__main__':
         device = torch.device("cpu")
     print(f"[DEVICE] Using device: {device} for embedding model / env")
 
-    embedding_model = EmbeddingModel(device=device)
+    embedding_model = EmbeddingModel(model_name=args.embedding_model, device=device)
+    HIDDEN = int(embedding_model.model.config.hidden_size)
 
   
     base_seed = None if int(args.seed) < 0 else int(args.seed)
@@ -1096,11 +1118,12 @@ if __name__ == '__main__':
   
     policy = AdaptedPointerNetworkPolicy(
         train_env,
-        embedding_dim=768,
-        hidden_dim=768,
+        embedding_dim=HIDDEN,
+        hidden_dim=HIDDEN,
         max_segments=MAX_SEGMENTS,
         policy_mode=str(args.policy_mode),
         split_on_space=(False if bool(args.punctuation_only) else bool(args.split_on_space)),
+        split_at_word_ends=bool(args.split_at_word_ends),
         split_words_before=(False if bool(args.punctuation_only) else bool(args.split_words_before)),
         split_on_connectors=(False if bool(args.punctuation_only) else True),
     )

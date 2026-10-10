@@ -56,12 +56,17 @@ class AdaptedPointerNetworkPolicy(nn.Module):
                  hidden_dim=128,        
                  max_segments=6,       
                  nhead=4,               
-                 num_encoder_layers=2  
+                 num_encoder_layers=2,
+                 *,
+                 split_at_word_ends: bool = False,
                 ):
         super().__init__()
         self.env = env
         self.hidden_dim = hidden_dim
         self.max_segments = max_segments
+        # Also allow the last token of every word as a split point, like RL4COTrainer
+        # --split_at_word_ends (text with little punctuation, e.g. transcribed Korean speech).
+        self.split_at_word_ends = bool(split_at_word_ends)
       
         self.train_decode_type = "sampling"
         self.val_decode_type = "greedy"
@@ -157,7 +162,15 @@ class AdaptedPointerNetworkPolicy(nn.Module):
             ids_space = self.tokenizer.encode(" " + char, add_special_tokens=False)
             if ids_space: valid_ids.update(ids_space)
 
-     
+        self._word_start_ids = (
+            torch.tensor(sorted(self._word_boundary_ids()), device=device, dtype=torch.long)
+            if self.split_at_word_ends
+            else None
+        )
+        self._special_ids = torch.tensor(
+            sorted({int(i) for i in getattr(self.tokenizer, "all_special_ids", [])}), device=device, dtype=torch.long
+        )
+
         sorted_ids = sorted(list(valid_ids))
         self._valid_split_ids = torch.tensor(sorted_ids, device=device, dtype=torch.long)
         self._end_split_ids = (
@@ -165,6 +178,19 @@ class AdaptedPointerNetworkPolicy(nn.Module):
             if end_ids
             else None
         )
+    def _word_boundary_ids(self) -> set:
+        """Vocabulary ids that start a word, with the same rule as the training policy:
+        sentencepiece '▁x' (e.g. bge-m3), GPT-2 'Ġx', otherwise WordPiece tokens without '##'."""
+        vocab = self.tokenizer.get_vocab()
+        if any(t.startswith("▁") for t in vocab):
+            is_start = lambda t: t.startswith("▁")
+        elif any(t.startswith("Ġ") for t in vocab):
+            is_start = lambda t: t.startswith("Ġ")
+        else:
+            is_start = lambda t: not t.startswith("##")
+        special = {int(i) for i in getattr(self.tokenizer, "all_special_ids", [])}
+        return {int(i) for t, i in vocab.items() if is_start(t) and int(i) not in special}
+
     @property
     def device(self):
         """获取模型所在的设备"""
@@ -290,6 +316,12 @@ class AdaptedPointerNetworkPolicy(nn.Module):
 
         # Base punctuation mask (end tokens handled only at final step)
         is_punct_base = torch.isin(td[ids_k], self._valid_split_ids)
+        if getattr(self, "_word_start_ids", None) is not None:
+            # 다음 토큰이 새 단어(어절)의 시작이면 이 토큰이 단어의 끝 → 여기서 자르면 단어가 안 쪼개진다
+            is_start = torch.isin(td[ids_k], self._word_start_ids)
+            is_word_end = torch.zeros_like(is_start)
+            is_word_end[:, :-1] = is_start[:, 1:]
+            is_punct_base = is_punct_base | (is_word_end & ~torch.isin(td[ids_k], self._special_ids))
 
         pointers = []
         log_probs = []

@@ -9,7 +9,7 @@
 | 무엇을 | 사용자가 **같은 질문을 경상방언으로** 했을 때, 의미 캐시가 캐시에 있는 **표준어 문장**을 같은 요청으로 알아보는가 |
 | 왜 | 의미 캐시의 핵심은 "표현은 달라도 뜻이 같은 요청"을 재사용하는 것. 방언은 실제 사용자 발화에서 가장 흔한 다른 표현이고, 원 논문은 영어 데이터만 다룸 |
 | 비교 | 문장 인코더 2개: 논문의 영어 전용 `BAAI/bge-base-en-v1.5` vs 다국어 `BAAI/bge-m3` |
-| 방식 | **단일 문장 벡터 + 코사인** (Step 1 Vanilla vCache와 같은 방식). 규칙 분할·RL 분할·조각 가중치(IDF/MLP)는 **쓰지 않음** (→ 3절) |
+| 방식 | ① **단일 문장 벡터 + 코사인** (Step 1 Vanilla vCache와 같은 방식, 인코더 2개 비교) ② **MVR-cache 한국어판** (Step 4: bge-m3로 RL 분할기를 방언 데이터에 새로 학습, 어절 경계에서 자름 → 3.5절). 규칙 분할·조각 가중치(IDF/MLP)는 쓰지 않음 |
 | 본 실험 | 오프라인 검색: 방언 질의 약 37만 개 → 표준어 문장 약 225만 개(캐시) 중 제 짝을 1등으로 찾는가. **Training 질의로 재사용 임계값을 정하고 Validation 질의로 잰다** |
 | 보조 실행 | vCache(δ=0.01)를 두 스트림에 돌림: 실제로 여러 번 말해진 문장만(`repeat`) / 인기 있는 질문이 반복되도록 만든(`zipf`) |
 | 데이터 | AI Hub **한국어 방언 발화 데이터(경상도)** 라벨 (Training 대화 7,699개 + Validation 843개). **git에 올리지 않고 Google Drive에서 읽음** |
@@ -109,8 +109,8 @@ AI Hub 이용약관상 재배포가 제한되고, 화자 정보(나이·성별·
 | 2 규칙 분할 + 균등 | 규칙(구두점) | 1/N | ❌ main에 규칙 분할기 없음 |
 | 3a 규칙 분할 + 휴리스틱 | 규칙 | IDF·길이·중심거리 | ❌ 〃 |
 | 3b 규칙 분할 + 학습 가중치 | 규칙 | MLP + BCE | ❌ 〃 |
-| 4 MVR-cache 재현 | RL | 1/N | ❌ 아래 3.4 |
-| 5 RL 분할 + 적응형 가중치 | RL | MLP | ❌ 〃 |
+| 4 MVR-cache 재현 | RL | 1/N | ✅ **한국어판으로 새로 학습** (bge-m3, 어절 경계, 3.5절) |
+| 5 RL 분할 + 적응형 가중치 | RL | MLP | ❌ main에 가중치 코드 없음 |
 
 ### 3.2 문장 벡터와 점수
 - **문장 하나 = 벡터 하나.** 문장을 자르지 않는다.
@@ -131,12 +131,34 @@ AI Hub 이용약관상 재배포가 제한되고, 화자 정보(나이·성별·
 - 이어서 돌리기: `--emb-cache`(Colab 로컬 `/content/emb_cache`)에 인코더별 벡터(`*_cache.npy`, `*_queries.npy`)와 채점 결과(`*_scores.npz`)를 저장한다. 같은 런타임에서 다시 실행하면 끝난 인코딩·채점을 건너뛴다. 결과 폴더가 없어지면 CSV·JSON을 이 폴더에 대신 저장한다.
 - vCache는 항목마다 관측이 6개(사전값 2 + 실제 4) 쌓이기 전에는 무조건 탐색한다. 의미마다 문장이 한 번씩만 오면 어떤 항목도 6개를 채울 수 없다(샘플 `cold` 실행에서 확인, 7.2절). 데이터를 키워도 의미 그룹 수가 늘 뿐 그룹당 문장 수는 대부분 그대로라, 반복이 있는 `repeat`(실제)·`zipf`(인위적) 스트림으로 vCache를 시험한다.
 
-### 3.4 분할(규칙·RL)과 조각 가중치(IDF·MLP)를 쓰지 않는 이유
+### 3.4 규칙 분할과 조각 가중치(IDF·MLP)를 쓰지 않는 이유
 - **main 기준이라 규칙 분할기·조각 가중치 코드가 없다.** 이 기능들은 `gpu-production`에서 추가됐다(`RuleSplitter.py`, `build_segment_weight_stats.py`).
-- **RL 분할기는 이 데이터에 맞지 않는다.** 가진 체크포인트는 영어 데이터를 768차원 영어 인코더로 학습한 것이다. bge-m3(1024차원)와는 차원부터 맞지 않고, 한국어 분할 정책은 이 데이터로 RL 학습을 다시 해야 한다.
+- **기존 RL 체크포인트는 이 데이터에 맞지 않는다.** 영어 데이터를 768차원 영어 인코더로 학습한 것이라 bge-m3(1024차원)와는 차원부터 맞지 않는다. 그래서 RL 분할기는 방언 데이터로 **새로 학습**한다(3.5절).
 - **먼저 기본 방식에서 인코더 차이를 확인하는 게 순서다.** 단일 벡터에서도 방언을 못 알아본다면 분할 이전에 인코더 문제다. 분할·가중치 효과는 인코더를 정한 다음 단계로 둔다(8절).
 
-### 3.5 비교 조건
+### 3.5 MVR-cache 한국어판 (Step 4)
+
+원저자 MVR-cache(`rl-training-algorithm/RL4COTrainer.py` + `MaxSimSplitter`) 구조를 그대로 쓰고, 한국어 방언 데이터에 맞춰 네 가지만 바꿨다.
+
+| | 원저자 설정 (영어) | 한국어판 | 이유 |
+|---|---|---|---|
+| 인코더 | bge-base-en (768) | **bge-m3 (1024)** | 다국어. 정책 신경망의 폭도 인코더 차원을 따라감 (원래 코드는 768로 고정) |
+| 자르는 위치 후보 | 문장부호만 (`--punctuation_only`) | 문장부호 + **어절 끝** (`--split_at_word_ends`) | 전사문은 문장부호가 거의 없어 문장부호만으로는 대부분 자를 곳이 없음 |
+| 학습 데이터 | SemBenchmark 프롬프트 1만 개 | 방언 데이터 의미 5,000개(Training) → 문장 약 1.5만 개 | 아래 |
+| 학습 문장 길이 | 512토큰 | 64토큰 (`--max_len 64`) | 스트림 문장의 99%가 37토큰 이하. 토큰 벡터를 GPU에 미리 올려 두는 메모리가 1/8 |
+
+**어절 끝에서 자르는 이유:** 분할기가 고른 위치의 토큰이 조각의 **마지막 토큰**이 된다. 원저자 코드의 `--split_on_space`는 "새 단어의 첫 토큰"을 후보로 써서 `거|예요`, `그러|니까`처럼 어절 중간을 자른다. `--split_at_word_ends`는 "다음 토큰이 새 어절의 시작인 토큰", 즉 어절의 마지막 토큰을 후보로 써서 조각이 항상 어절 단위가 된다. 학습(`RL4COTrainer`)과 추론(`MaxSimSplitter`, 평가 옵션 `--splitter-split-at-word-ends`)이 같은 규칙을 쓴다.
+
+**학습 데이터 (`benchmarks/dialect/make_dialect_rl_data.py`)**
+- Training split에서 의미(표준어 문장 그룹) 5,000개를 뽑아, 각 의미의 표준어 문장과 방언형을 같은 `id_set`으로 넣는다. 검증용은 Validation split에서 500개.
+- **함정 추가:** 원저자 학습 방식(`anchor_nn`)은 각 문장을 그 문장의 가장 가까운 이웃과 짝지어 학습한다. 이 데이터에서는 가장 가까운 이웃이 거의 항상 같은 뜻의 짝(방언↔표준어)이라 학습 쌍이 거의 전부 정답이 된다(작은 모델로 시험했을 때 정답 쌍 비율 100%). 그래서 검색 실험(셀 2)에서 찾은 **각 질의의 가장 비슷한 오답 문장**(`retrieval_BAAI__bge-m3.csv`의 `best_wrong_text`)을 별도 의미로 함께 넣는다(시험 시 정답 쌍 비율 62.5%).
+- **평가와 분리:** vCache 스트림(`repeat`, `zipf`)에 나오는 의미는 학습 문장으로도 함정으로도 쓰지 않는다.
+
+**학습 설정:** `gpu-production`에서 돌렸던 Step 4 설정과 같다(`--policy_mode separate --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --bce_auto_balance --precompute_token_embeddings`). 라벨은 `--label_mode id_set`(같은 표준어 문장 그룹이면 정답). 검증 보상(`val/reward`)이 5번 연속(25 epoch) 0.01 이상 오르지 않으면 조기 종료.
+
+**평가 설정:** `eval_sembenchmark_verified_splitter.py`로 `repeat`, `zipf` 스트림을 돌린다. 단일 벡터 HNSW로 후보 20개(`--candidate-k 20`)를 뽑고 MaxSim으로 다시 순위를 매김(조각 최대 4개 + 문장 전체 벡터, `--include-full-embedding`, 캐시 항목의 조각은 저장해 두고 재사용). 재사용 판단은 vCache verified(δ=0.01) 그대로. 같은 스트림의 Vanilla vCache(bge-m3, 셀 2) 결과와 나란히 집계한다.
+
+### 3.6 비교 조건
 
 | 조건 | 인코더 | 차원 | 비고 |
 |---|---|---|---|
@@ -230,10 +252,47 @@ for s in STREAMS:
     !python benchmarks/dialect/analyze_dialect_vcache.py --stream "{PREP}/stream_{s}.parquet" --results {q(outs)} --out "{RES}/vcache_{s}_summary.csv"
 ```
 
+### 셀 3: MVR-cache 한국어판 (RL 분할기 학습 → 평가 → Vanilla와 비교). 셀 2의 bge-m3 검색 실험·vCache가 끝난 뒤
+```python
+%cd /content/MVR-Cache-dialect/mvr-cache
+import os, glob, shutil, json
+os.environ.update(HF_ENDPOINT="https://huggingface.co", HF_CACHE_BASE="/content/hf_cache", USE_TF="0")
+D = "/content/drive/MyDrive/dialects"
+PREP, RES = f"{D}/prepared", f"{D}/results"
+ENC, TAG = "BAAI/bge-m3", "bge-m3"
+CKPT = f"{D}/rl_ckpt_{TAG}"            # 학습된 분할기 (Drive에 저장)
+RL_EPOCHS = 100                       # 조기 종료가 없으면 최대 이만큼. 세션이 짧으면 줄일 것 (RL 학습은 이어서 못 함)
+STREAMS = ["repeat", "zipf"]
+NEG = f"{RES}/retrieval_BAAI__{TAG}.csv"
+assert os.path.exists(NEG), f"{NEG} 없음: 셀 2의 bge-m3 검색 실험을 먼저 끝내 주세요"
+
+# 1) RL 학습 데이터 (의미 5,000개 + 검색 실험의 오답 문장을 함정으로)
+if not os.path.exists(f"{PREP}/rl_train.parquet"):
+    !python benchmarks/dialect/make_dialect_rl_data.py --data-dir "{PREP}" --train-groups 5000 --val-groups 500 --hard-negatives "{NEG}"
+
+# 2) RL 분할기 학습 (끊기면 처음부터)
+if not os.path.exists(f"{CKPT}/DONE"):
+    shutil.rmtree(CKPT, ignore_errors=True)
+    !cd ../rl-training-algorithm && python RL4COTrainer.py --gpu_id 0 --embedding_model {ENC} --max_len 64 --train_parquet "{PREP}/rl_train.parquet" --val_parquet "{PREP}/rl_val.parquet" --parquet_text_column prompt --label_mode id_set --train_sampling_mode anchor_nn --nn_warmup_epochs 5 --nn_candidate_topk 10 --batch_size 8 --accumulate_grad_batches 2 --lr 1e-4 --max_epochs {RL_EPOCHS} --check_val_every_n_epoch 5 --policy_mode separate --punctuation_only --split_at_word_ends --bce_auto_balance --precompute_token_embeddings --save_weights_only --seed 0 --checkpoint_dir "{CKPT}"
+    assert glob.glob(f"{CKPT}/*.ckpt"), "RL 학습 실패: 위 출력의 에러 확인"
+    open(f"{CKPT}/DONE", "w").write(f"max_epochs={RL_EPOCHS}\n")
+print("checkpoint:", sorted(os.listdir(CKPT)))
+
+# 3) MVR-cache 평가 (스트림별) → Vanilla vCache(bge-m3)와 나란히 집계
+for s in STREAMS:
+    out = f"{RES}/mvr_{s}_{TAG}.json"
+    if not os.path.exists(out):
+        !python benchmarks/eval_sembenchmark_verified_splitter.py --dataset "{PREP}/stream_{s}.parquet" --delta 0.01 --sleep 0.02 --similarity-evaluator benchmark_id_set --candidate-selection top_k --candidate-k 20 --use-cached-candidate-segments --include-full-embedding --splitter-device cuda --splitter-checkpoint "{CKPT}" --splitter-max-segments 4 --embedding-model {ENC} --splitter-split-at-word-ends --output-json "{out}"
+    vanilla = f"{RES}/vcache_{s}_{TAG}.json"
+    runs = " ".join(f'"{p}"' for p in (vanilla, out) if os.path.exists(p))
+    !python benchmarks/dialect/analyze_dialect_vcache.py --stream "{PREP}/stream_{s}.parquet" --results {runs} --out "{RES}/mvr_{s}_summary.csv"
+```
+
 ### 결과 파일 (Drive `MyDrive/dialects/`)
 - `prepared/` : `index`·`pairs`·`stream_repeat`·`stream_zipf`·`stream_cold.parquet` + `manifest.json`
 - `results/retrieval_<모델>.json` : 인코더별 요약(all·train·val·calibrated) / `results/retrieval_BAAI__<모델>.csv` : 질의별 상세
 - `results/vcache_<스트림>_<모델>.json` : vCache 실행 결과 (요청별 hit/tp/fp/fn) / `results/vcache_<스트림>_summary.csv` : kind × variant 집계
+- 셀 3: `prepared/rl_train`·`rl_val.parquet` + `rl_manifest.json` / `rl_ckpt_bge-m3/` : 학습된 분할기 / `results/mvr_<스트림>_bge-m3.json` : MVR-cache 실행 결과 / `results/mvr_<스트림>_summary.csv` : Vanilla(`vcache_...`)와 MVR(`mvr_...`)을 `results` 열로 구분해 나란히
 
 **예상 시간 (T4):** 가공 10~20분 / 검색 실험: float32로 bge-base-en 약 2.5시간을 실측. float16에서는 몇 배 빠를 것으로 보이지만 아직 재지 않았고, bge-m3는 모델이 약 3배 커서 더 오래 걸린다 / vCache `repeat`(2.7만 요청) 인코더당 약 20분, `zipf`(5만 요청) 인코더당 30~40분 (추정). 각 단계가 끝날 때마다 Drive에 저장되므로 세션이 끊겨도 이어서 돌릴 수 있다. **실행 중에는 Drive의 `dialects/` 폴더를 지우거나 옮기지 말 것**(가공 데이터와 결과가 들어 있다).
 
@@ -257,9 +316,15 @@ for s in STREAMS:
 | `mvr-cache/benchmarks/dialect/eval_dialect_retrieval.py` | 새 파일 | 인코더별 오프라인 검색 평가, Training→Validation 임계값 보정, float16 보관 + 구간별 float32 계산 (4.1절) |
 | `mvr-cache/benchmarks/dialect/analyze_dialect_vcache.py` | 새 파일 | vCache 결과를 kind × variant로 나눠 hit·error·`nn_correct_rate` 집계 (4.2절) |
 | `.gitignore` | 수정 | 방언 원본·가공 데이터(`원천데이터/`, `라벨링데이터/`, `*경상도*/`, `*.zip`, `dialect/`)와 `*.wav`를 git에서 제외 |
+| `mvr-cache/benchmarks/dialect/make_dialect_rl_data.py` | 새 파일 | RL 분할기 학습 데이터(`rl_train`/`rl_val.parquet`): 의미별 표준어+방언형, 검색 실험의 오답 문장을 함정으로 추가, 평가 스트림의 의미 제외 (3.5절) |
+| `rl-training-algorithm/RL4COTrainer.py` | 수정 | `--embedding_model`(인코더 선택, 정책 폭 = 인코더 차원), `--max_len`(기본 512 그대로), `--split_at_word_ends` 옵션 추가. 주지 않으면 기존과 같음 |
+| `rl-training-algorithm/AdaptedPointerNetworkPolicy.py` | 수정 | `split_at_word_ends`: 어절의 마지막 토큰을 자르는 위치 후보에 추가 |
+| `mvr-cache/vcache/vcache_core/splitter/AdaptedPointerNetworkPolicy.py` | 수정 | 추론 쪽에도 같은 `split_at_word_ends` 규칙 |
+| `mvr-cache/vcache/vcache_core/splitter/MaxSimSplitter.py` | 수정 | 정책 폭을 768 고정 대신 인코더 차원으로, `split_at_word_ends` 전달 |
+| `mvr-cache/benchmarks/eval_sembenchmark_verified_splitter.py` | 수정 | `--embedding-model`, `--splitter-split-at-word-ends` 옵션 추가. 주지 않으면 기존과 같음 |
 | `DIALECT_EXPERIMENT.md` | 새 파일 | 이 문서 |
 
-판정 규칙(vCache verified 정책), 캐시·HNSW·채점 코드는 손대지 않았다.
+판정 규칙(vCache verified 정책), 캐시·HNSW·채점 코드, RL 보상·학습 알고리즘은 손대지 않았다.
 
 ## 7. 샘플 결과 (대화 15개, 질의 363개, 캐시 4,426문장 — 전체 데이터 실행 전 참고용)
 
@@ -293,4 +358,6 @@ for s in STREAMS:
 - Validation에는 DKSR만 있어 `calibrated`는 DKSR 대화 기준 수치다. DKCI는 Training에서만 `source`별로 볼 수 있다.
 - 방언 차이가 대부분 한두 단어라 과제가 쉬운 편. 방언 비율이 높은 질의만 따로 보거나(`by_dialect_ratio`), 다른 지역(전라·제주 등) 데이터로 넓힐 수 있다.
 - 다국어 인코더의 풀링은 이 코드의 평균 풀링을 그대로 썼다(bge-m3 권장 방식은 [CLS]). vCache와 같은 방식으로 맞추기 위한 선택이며, 필요하면 비교해 볼 수 있다.
-- 분할·가중치로 넓히려면: (1) `gpu-production`의 규칙 분할기·가중치 코드를 이 브랜치에 가져오고, (2) 한국어 문장부호·어절 기준 분할 규칙을 확인하고, (3) RL은 한국어 인코더로 분할 정책을 새로 학습해야 한다.
+- MVR-cache 한국어판은 bge-m3 하나로만 학습한다. RL 학습 시간은 T4에서 아직 재지 않았다(조기 종료 조건에 따라 달라짐).
+- RL 검증 보상은 원저자 방식대로 검증 문장끼리 무작위로 짝지어 계산해서 대부분 오답 쌍이다. 조기 종료가 이 값을 기준으로 한다.
+- 규칙 분할·조각 가중치(Step 2·3·5)로 넓히려면 `gpu-production`의 규칙 분할기·가중치 코드를 이 브랜치에 가져와야 한다.

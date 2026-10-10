@@ -63,6 +63,7 @@ class AdaptedPointerNetworkPolicy(nn.Module):
                  *,
                  policy_mode: str = "joint",
                  split_on_space: bool = False,
+                 split_at_word_ends: bool = False,
                  split_words_before: bool = False,
                  split_on_connectors: bool = True,
                 ):
@@ -82,6 +83,10 @@ class AdaptedPointerNetworkPolicy(nn.Module):
         self.max_segments = max_segments
         self.policy_mode = str(policy_mode).lower().strip()
         self.split_on_space = bool(split_on_space)
+        # A pointer marks the LAST token of a segment. split_on_space marks word-START tokens, so it
+        # cuts after the first piece of a word ("거|예요"). split_at_word_ends marks the token right
+        # before a word start instead, so segments are whole words (Korean eojeol).
+        self.split_at_word_ends = bool(split_at_word_ends)
         self.split_words_before = bool(split_words_before)
         self.split_on_connectors = bool(split_on_connectors)
         if self.policy_mode not in {"joint", "separate"}:
@@ -393,10 +398,19 @@ class AdaptedPointerNetworkPolicy(nn.Module):
                 else:
                     is_punct_global = is_punct_global | is_conn
 
-        if self.split_on_space:
+        if self.split_on_space or self.split_at_word_ends:
             word_ids = self._get_word_boundary_ids_tensor(input_ids)
             if word_ids is not None:
-                is_punct_global = is_punct_global | torch.isin(input_ids, word_ids)
+                is_start = torch.isin(input_ids, word_ids)
+                if self.split_on_space:
+                    is_punct_global = is_punct_global | is_start
+                if self.split_at_word_ends:
+                    is_end = torch.zeros_like(is_start)
+                    is_end[:, :-1] = is_start[:, 1:]
+                    sp_t = self._get_special_token_ids_tensor(input_ids.device)
+                    if isinstance(sp_t, torch.Tensor) and int(sp_t.numel()) > 0:
+                        is_end = is_end & (~torch.isin(input_ids, sp_t))
+                    is_punct_global = is_punct_global | is_end
 
         return is_punct_global
 

@@ -107,6 +107,7 @@ class MaxSimSplitter:
         max_segments: int = 4,
         overlap_tokens: int = 0,
         include_full_embedding: bool = False,
+        split_at_word_ends: bool = False,
     ):
         # Normalize device early so all downstream `.to(...)` calls are consistent.
         self.device = torch.device(device) if not isinstance(device, torch.device) else device
@@ -148,11 +149,13 @@ class MaxSimSplitter:
         )
 
         # 2. 初始化 Policy
+        hidden = int(self.embedding_model.model.config.hidden_size)  # 768 for bge-base-en, 1024 for bge-m3
         self.policy = AdaptedPointerNetworkPolicy(
             self.env,
-            embedding_dim=768,
-            hidden_dim=768,
+            embedding_dim=hidden,
+            hidden_dim=hidden,
             max_segments=int(max_segments),
+            split_at_word_ends=bool(split_at_word_ends),
         )
         
         # =================================================================
