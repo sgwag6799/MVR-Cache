@@ -36,21 +36,47 @@ import torch.nn.functional as F
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 
 
-def embed(model: EmbeddingModel, texts: list, batch_size: int, device, label: str) -> torch.Tensor:
+def embed(model: EmbeddingModel, texts: list, batch_size: int, device, label: str, fp16: bool) -> torch.Tensor:
     """Unit vectors for `texts`, stored as float16 on `device` (2M x 1024 float32 would not fit a T4).
 
-    Encoding itself runs in float32 like vCache; batches are formed by length to waste less padding.
+    Batches are formed by length to waste less padding. With `fp16` the encoder runs under CUDA
+    autocast (several times faster on a T4; cosines move by about 1e-3), otherwise in float32 like vCache.
     """
     order = np.argsort([len(t) for t in texts])
     out = torch.empty(len(texts), model.model.config.hidden_size, dtype=torch.float16, device=device)
     t0, step = time.time(), max(1, len(texts) // 10)
     for i in range(0, len(texts), batch_size):
         idx = order[i : i + batch_size]
-        v = F.normalize(model.get_embeddings_tensor([texts[j] for j in idx]).float(), dim=-1)
+        with torch.autocast("cuda", dtype=torch.float16, enabled=fp16):
+            v = model.get_embeddings_tensor([texts[j] for j in idx])
+        v = F.normalize(v.float(), dim=-1)
         out[torch.as_tensor(idx, device=device)] = v.to(device=device, dtype=torch.float16)
         if (i // batch_size) % max(1, step // batch_size) == 0:
             print(f"  encode {label}: {min(i + batch_size, len(texts)):,}/{len(texts):,} ({time.time() - t0:.0f}s)", flush=True)
     return out
+
+
+def cached(path: str, make, device):
+    """Load a float16 tensor saved by an earlier (interrupted) run, or make it and save it."""
+    if path and os.path.exists(path):
+        print(f"  load {path}", flush=True)
+        return torch.from_numpy(np.load(path)).to(device)
+    t = make()
+    if path:
+        np.save(path, t.cpu().numpy())
+    return t
+
+
+def save_csv(df: pd.DataFrame, path: str, fallback_dir: str) -> None:
+    """Write to `path`; if that folder vanished (e.g. a Drive folder was removed mid-run), keep a local copy."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        df.to_csv(path, index=False)
+    except OSError as err:
+        os.makedirs(fallback_dir, exist_ok=True)
+        path = os.path.join(fallback_dir, os.path.basename(path))
+        df.to_csv(path, index=False)
+        print(f"  [WARN] {err} -> saved {path} instead", flush=True)
 
 
 def score_queries(q: torch.Tensor, idx: torch.Tensor, own: np.ndarray, rand: np.ndarray,
@@ -157,6 +183,9 @@ def main() -> None:
     p.add_argument("--block", type=int, default=262144, help="Cache rows scored at once (cast to float32).")
     p.add_argument("--target-errors", nargs="+", type=float, default=[0.01, 0.05])
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--fp32", action="store_true", help="Encode in float32 (default on CUDA: float16 autocast).")
+    p.add_argument("--emb-cache", default=None,
+                   help="Local folder for vectors and scores, so a rerun after a crash skips encoding (e.g. /content/emb_cache).")
     p.add_argument("--max-queries", type=int, default=None, help="Use only the first N queries (quick check).")
     p.add_argument("--out", required=True, help="Summary JSON; per-query CSVs are written next to it.")
     args = p.parse_args()
@@ -178,21 +207,34 @@ def main() -> None:
                "n_queries": pairs["split"].value_counts().to_dict(), "models": {}}
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
+    fp16 = str(args.device).startswith("cuda") and not args.fp32
+    if args.emb_cache:
+        os.makedirs(args.emb_cache, exist_ok=True)
     for name in args.models:
         t0 = time.time()
-        model = EmbeddingModel(model_name=name, device=args.device)
-        idx_vec = embed(model, index["text"].tolist(), args.batch_size, args.device, "cache")
-        q_vec = embed(model, pairs["dialect"].tolist(), args.batch_size, args.device, "queries")
-        r = score_queries(q_vec, idx_vec, own, rand, args.chunk, args.block)
+        tag = f"{name.replace('/', '__')}_{'fp16' if fp16 else 'fp32'}_{len(index)}_{len(pairs)}"
+        path = (lambda kind: os.path.join(args.emb_cache, f"{tag}_{kind}")) if args.emb_cache else (lambda kind: None)
+        if path("scores.npz") and os.path.exists(path("scores.npz")):
+            print(f"  load {path('scores.npz')}", flush=True)
+            r, model, idx_vec, q_vec = dict(np.load(path("scores.npz"))), None, None, None
+            dim = int(r.pop("dim"))
+        else:
+            model = EmbeddingModel(model_name=name, device=args.device)
+            idx_vec = cached(path("cache.npy"), lambda: embed(model, index["text"].tolist(), args.batch_size, args.device, "cache", fp16), args.device)
+            q_vec = cached(path("queries.npy"), lambda: embed(model, pairs["dialect"].tolist(), args.batch_size, args.device, "queries", fp16), args.device)
+            r = score_queries(q_vec, idx_vec, own, rand, args.chunk, args.block)
+            dim = int(idx_vec.shape[1])
+            if path("scores.npz"):
+                np.savez(path("scores.npz"), dim=dim, **r)
 
         df = pairs.copy()
         df["own_cos"], df["best_wrong_cos"], df["random_cos"] = r["own"], r["wrong"], r["rand"]
         df["best_wrong_text"] = index["text"].to_numpy()[r["wrong_i"]]
         df["top1_cos"], df["rank"] = r["top1"], r["rank"]
         df["top1_correct"] = r["top1_i"] == own
-        df.to_csv(os.path.join(out_dir, f"retrieval_{name.replace('/', '__')}.csv"), index=False)
+        save_csv(df, os.path.join(out_dir, f"retrieval_{name.replace('/', '__')}.csv"), args.emb_cache or "/tmp")
 
-        res = {"dim": int(idx_vec.shape[1]), "seconds": round(time.time() - t0, 1),
+        res = {"dim": dim, "fp16": fp16, "seconds": round(time.time() - t0, 1),
                "all": metrics(df, args.target_errors)}
         for s in splits:
             res[s] = metrics(df[df["split"] == s], args.target_errors)
@@ -211,9 +253,17 @@ def main() -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=1)
-    print(f"saved -> {args.out}")
+    out = args.out
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=1)
+    except OSError as err:
+        out = os.path.join(args.emb_cache or "/tmp", os.path.basename(args.out))
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=1)
+        print(f"[WARN] {err} -> saved {out} instead")
+    print(f"saved -> {out}")
 
 
 if __name__ == "__main__":

@@ -127,6 +127,8 @@ AI Hub 이용약관상 재배포가 제한되고, 화자 정보(나이·성별·
 | 정답 기준 | 1등이 제 짝 문장인가 | 같은 `id_set`(같은 표준어 문장 그룹)인가 |
 
 - 검색 실험의 메모리: 문장 벡터 204만 × 1024를 float32로 들면 8GB라 **벡터는 float16으로 보관**하고, 캐시를 26만 행씩 잘라 float32로 바꿔 질의 1,024개씩 계산한다. 샘플에서 float32로 계산한 결과와 비교하면 top-1·AUC·임계값 히트율은 같고, 동점 근처에서 순위가 하나씩 바뀌는 정도(top-5 0.978 → 0.975)의 차이만 있다.
+- 인코딩 속도: GPU에서는 인코더를 **float16 autocast**로 돌린다(`--fp32`로 끌 수 있음). 전체 데이터에서 float32로 돌렸더니 bge-base-en 하나에 인코딩만 약 2시간 20분(캐시 225만 문장 1시간 56분 + 질의 37만 개 21분)이 걸렸다. 코사인은 약 1e-3 정도만 달라진다.
+- 이어서 돌리기: `--emb-cache`(Colab 로컬 `/content/emb_cache`)에 인코더별 벡터(`*_cache.npy`, `*_queries.npy`)와 채점 결과(`*_scores.npz`)를 저장한다. 같은 런타임에서 다시 실행하면 끝난 인코딩·채점을 건너뛴다. 결과 폴더가 없어지면 CSV·JSON을 이 폴더에 대신 저장한다.
 - vCache는 항목마다 관측이 6개(사전값 2 + 실제 4) 쌓이기 전에는 무조건 탐색한다. 의미마다 문장이 한 번씩만 오면 어떤 항목도 6개를 채울 수 없다(샘플 `cold` 실행에서 확인, 7.2절). 데이터를 키워도 의미 그룹 수가 늘 뿐 그룹당 문장 수는 대부분 그대로라, 반복이 있는 `repeat`(실제)·`zipf`(인위적) 스트림으로 vCache를 시험한다.
 
 ### 3.4 분할(규칙·RL)과 조각 가중치(IDF·MLP)를 쓰지 않는 이유
@@ -217,7 +219,7 @@ print(json.dumps({k: v for k, v in json.load(open(f"{PREP}/manifest.json")).item
 for m in MODELS:
     out = f"{RES}/retrieval_{m.split('/')[-1]}.json"
     if not os.path.exists(out):
-        !python benchmarks/dialect/eval_dialect_retrieval.py --data-dir "{PREP}" --models {m} --device {DEVICE} --out "{out}"
+        !python benchmarks/dialect/eval_dialect_retrieval.py --data-dir "{PREP}" --models {m} --device {DEVICE} --emb-cache /content/emb_cache --out "{out}"
 
 # 3) 보조 실행: vCache (스트림 × 인코더, 끝난 것은 건너뜀)
 for s in STREAMS:
@@ -235,7 +237,7 @@ for s in STREAMS:
 - `results/retrieval_<모델>.json` : 인코더별 요약(all·train·val·calibrated) / `results/retrieval_BAAI__<모델>.csv` : 질의별 상세
 - `results/vcache_<스트림>_<모델>.json` : vCache 실행 결과 (요청별 hit/tp/fp/fn) / `results/vcache_<스트림>_summary.csv` : kind × variant 집계
 
-**예상 시간 (T4, 추정):** 가공 수 분 / 검색 실험 bge-base-en 약 20분, bge-m3 약 1시간(문장 236만 개 인코딩이 대부분) / vCache `repeat`(2.7만 요청) 인코더당 약 20분, `zipf`(5만 요청) 인코더당 30~40분 → 합계 약 3~4시간. 각 단계가 끝날 때마다 Drive에 저장되므로 세션이 끊겨도 이어서 돌릴 수 있다(단, 돌고 있던 단계는 처음부터).
+**예상 시간 (T4):** 가공 수 분 / 검색 실험: float32로 bge-base-en 약 2.5시간을 실측. float16에서는 몇 배 빠를 것으로 보이지만 아직 재지 않았고, bge-m3는 모델이 약 3배 커서 더 오래 걸린다 / vCache `repeat`(2.7만 요청) 인코더당 약 20분, `zipf`(5만 요청) 인코더당 30~40분 (추정). 각 단계가 끝날 때마다 Drive에 저장되므로 세션이 끊겨도 이어서 돌릴 수 있다. **실행 중에는 Drive의 `dialects/` 폴더를 지우거나 옮기지 말 것**(가공 데이터와 결과가 들어 있다).
 
 ## 6. 변경한 파일 (main 대비)
 
