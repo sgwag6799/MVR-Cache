@@ -3,7 +3,10 @@ import os
 from typing import Any, Dict, List, Optional
 
 import torch
-from vllm import LLM, RequestOutput, SamplingParams
+try:  # [수정: prefix-stress-test] vllm이 없어도 모듈 import는 되게
+    from vllm import LLM, RequestOutput, SamplingParams
+except ImportError:
+    LLM = RequestOutput = SamplingParams = None
 
 from vcache.inference_engine.inference_engine import InferenceEngine
 

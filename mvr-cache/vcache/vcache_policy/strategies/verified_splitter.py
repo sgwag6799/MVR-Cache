@@ -279,8 +279,19 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             except Exception:
                 pass
 
+    # [추가: prefix-stress-test] 분할기가 segment_weights(텐서)를 주면 조각별 가중치로 MaxSim을 계산한다.
+    #   없으면(원래 RL 분할기) 원본과 똑같이 균등 가중치.
+    def _score_tensors(self, query_tensor, corpus_tensor) -> float:
+        weights_fn = getattr(self.splitter, "segment_weights", None)
+        if weights_fn is None:
+            return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        return self._maxsim_from_tensors(
+            query_tensor, corpus_tensor,
+            query_weights=weights_fn(query_tensor), corpus_weights=weights_fn(corpus_tensor),
+        )
+
     @staticmethod
-    def _maxsim_from_tensors(query_tensor, corpus_tensor) -> float:
+    def _maxsim_from_tensors(query_tensor, corpus_tensor, query_weights=None, corpus_weights=None) -> float:
         """
         Compute symmetric MaxSim similarity and return it in **[0, 1]** given:
           - query_tensor:  [S_q, H] (segment embeddings)
@@ -304,9 +315,14 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             max_cos_sim_row = torch.max(cos, dim=1).values  # [Q]
             max_cos_sim_col = torch.max(cos, dim=0).values  # [C]
 
-            # Weighted version (training-style). No per-segment weights available here, so use uniform.
-            query_weights = torch.ones(max_cos_sim_row.shape[0], device=dev, dtype=torch.float32)
-            corpus_weights = torch.ones(max_cos_sim_col.shape[0], device=dev, dtype=torch.float32)
+            # Weighted version (training-style); uniform unless the caller supplies weights.
+            # [수정: prefix-stress-test] 가중치가 주어지면 그 값을 쓴다 (가중 평균이라 결과는 그대로 [0, 1])
+            if query_weights is None:
+                query_weights = torch.ones(max_cos_sim_row.shape[0], device=dev, dtype=torch.float32)
+            if corpus_weights is None:
+                corpus_weights = torch.ones(max_cos_sim_col.shape[0], device=dev, dtype=torch.float32)
+            query_weights = query_weights.to(device=dev, dtype=torch.float32)
+            corpus_weights = corpus_weights.to(device=dev, dtype=torch.float32)
             row_score = torch.sum(max_cos_sim_row * query_weights) / (torch.sum(query_weights) + 1e-8)
             col_score = torch.sum(max_cos_sim_col * corpus_weights) / (torch.sum(corpus_weights) + 1e-8)
         else:
@@ -458,13 +474,13 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors(
                 query, candidate
             )
-            return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+            return self._score_tensors(query_tensor, corpus_tensor)
 
         # Mixed mode: compute MaxSim + cosine(full_embed_no_cls)
         qenc = self.splitter.encode_text(query)
         cenc = self.splitter.encode_text(candidate)
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(qenc, cenc)
-        maxsim01 = self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         fullcos01 = self._cos01(qenc["pooled_no_cls"], cenc["pooled_no_cls"])
         return 0.5 * (float(maxsim01) + float(fullcos01))
 
@@ -490,7 +506,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             pass
 
         query_tensor, corpus_tensor = self.splitter.split_pair_return_maxsim_tensors_from_encoded(query_enc, cand_enc)
-        maxsim01 = self._maxsim_from_tensors(query_tensor, corpus_tensor)
+        maxsim01 = self._score_tensors(query_tensor, corpus_tensor)
         if not bool(getattr(self, "mix_fullcos", False)):
             return float(maxsim01)
         fullcos01 = self._cos01(query_enc["pooled_no_cls"], cand_enc["pooled_no_cls"])
@@ -687,7 +703,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                             s = self._maxsim_similarity_from_encoded(query_enc, cached_prompt)
                     else:
                         with self._time_block("maxsim.score_tensors"):
-                            s = self._maxsim_from_tensors(query_tensor, cand_tensor)
+                            s = self._score_tensors(query_tensor, cand_tensor)
                 else:
                     with self._time_block("maxsim.score_pair"):
                         s = self._maxsim_similarity_from_encoded(query_enc, cached_prompt)
