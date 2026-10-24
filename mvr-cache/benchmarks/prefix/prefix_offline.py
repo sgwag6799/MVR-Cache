@@ -147,6 +147,7 @@ def smaxsim01(qx, qm, qw, cx, cm, cw):
     return ((raw + 1.0) * 0.5).clamp(0.0, 1.0)
 
 
+@torch.no_grad()
 def score_pairs(cond, bank_q, bank_c, qi, ci, device, head=None, knn_q=None, knn_c=None, bs=4096):
     if cond == "M1":
         s = (knn_q[qi] * knn_c[ci]).sum(-1)
