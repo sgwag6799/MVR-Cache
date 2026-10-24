@@ -29,3 +29,6 @@ hf_cache/
 
 rl-training-algorithm/models/
 mvr-cache/benchmarks/results/
+
+# local datasets
+data/

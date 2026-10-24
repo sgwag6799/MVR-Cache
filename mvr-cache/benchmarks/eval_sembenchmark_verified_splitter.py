@@ -89,6 +89,7 @@ from vcache.vcache_core.similarity_evaluator.strategies.string_comparison import
 )
 from vcache.vcache_core.splitter.embedding_model import EmbeddingModel
 from vcache.vcache_core.splitter.MaxSimSplitter import MaxSimSplitter
+from vcache.vcache_core.splitter.PrefixRuleSplitter import PrefixRuleSplitter  # [추가: prefix-stress-test]
 from vcache.inference_engine.strategies.benchmark import BenchmarkInferenceEngine
 from vcache.vcache_policy.strategies.verified_splitter import VerifiedSplitterDecisionPolicy
 
@@ -255,11 +256,27 @@ def main() -> None:
         help="How to evaluate correctness (match benchmark.py run-combination).",
     )
     parser.add_argument("--max-capacity", type=int, default=200_000)
+    # [추가: prefix-stress-test] vCache 탐색/활용 난수(random.uniform)를 고정해 시드끼리 짝지어 비교
+    parser.add_argument("--seed", type=int, default=None, help="Seed the global random generators (explore/exploit draw).")
+    # [추가: prefix-stress-test] 이 열이 True인 행만 평가 (예: fits_all_levels → 모든 단계에서 512토큰 이하인 같은 행 집합)
+    parser.add_argument("--filter-true-column", default=None,
+                        help="Keep only rows where this boolean column is True (e.g. fits_all_levels).")
     parser.add_argument(
         "--splitter-checkpoint",
-        required=True,
-        help="MaxSimSplitter checkpoint file or directory (auto-picks latest ckpt).",
+        default=None,
+        help="MaxSimSplitter checkpoint file or directory (auto-picks latest ckpt). Required for --splitter-mode rl.",
     )
+    # [추가: prefix-stress-test] 규칙 분할 모드 (체크포인트 불필요). 자르는 규칙은 vcache_core/splitter/prefix_split.py
+    parser.add_argument("--splitter-mode", choices=["rl", "prefix_rule"], default="rl",
+                        help="rl: trained RL splitter (original). prefix_rule: punctuation rule splitter of the prefix stress test.")
+    parser.add_argument("--rule-max-cuts", type=int, default=32,
+                        help="prefix_rule: max cut points in the original prompt (-1 = no cap).")
+    parser.add_argument("--rule-cap-scope", choices=["original", "all"], default="original",
+                        help="prefix_rule: count the cap inside the original prompt only (original) or from the start (all).")
+    parser.add_argument("--prefix-pool", default=None,
+                        help="prefix_rule: prefix_pool.json, used to find where the shared prefix ends (cap_scope original).")
+    parser.add_argument("--segment-head", default=None,
+                        help="prefix_rule: learned weight head from benchmarks/prefix/prefix_offline.py (M3). Omit for uniform (M2).")
     parser.add_argument(
         "--splitter-device",
         default="cpu",
@@ -386,6 +403,12 @@ def main() -> None:
         help="If set, synchronize CUDA around timed blocks for more accurate GPU timings (adds overhead).",
     )
     args = parser.parse_args()
+    if args.seed is not None:
+        import random as _random
+
+        _random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
 
     # Mirror: must be set before importing HF libs in a fresh process.
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
@@ -458,6 +481,10 @@ def main() -> None:
                     f"Local dataset is missing required LLM response column '{args.llm_col}'. Available columns: {list(df.columns)}"
                 )
 
+        # [추가: prefix-stress-test] 지정한 열이 True인 행만 남긴다 (행 순서는 그대로)
+        if args.filter_true_column:
+            df = df[df[args.filter_true_column].astype(bool)].reset_index(drop=True)
+            print(f"[filter] {args.filter_true_column}: {len(df)} rows kept")
         rows = df.to_dict("records")
         if args.max_samples is not None:
             rows = rows[: int(args.max_samples)]
@@ -499,14 +526,27 @@ def main() -> None:
 
     shared_embedder = EmbeddingModel(device=args.splitter_device)
     embedding_engine = BGEEmbeddingEngine(embedding_model=shared_embedder)
-    splitter = MaxSimSplitter(
-        checkpoint_path=args.splitter_checkpoint,
-        device=args.splitter_device,
-        embedding_model=shared_embedder,
-        max_segments=int(args.splitter_max_segments),
-        overlap_tokens=int(args.splitter_overlap_tokens),
-        include_full_embedding=bool(args.include_full_embedding),
-    )
+    if args.splitter_mode == "prefix_rule":
+        # [추가: prefix-stress-test] 규칙 분할기 + (선택) 학습 가중치 헤드
+        splitter = PrefixRuleSplitter(
+            device=args.splitter_device,
+            embedding_model=shared_embedder,
+            max_cuts=int(args.rule_max_cuts),
+            cap_scope=args.rule_cap_scope,
+            pool_path=args.prefix_pool,
+            head_path=args.segment_head,
+        )
+    else:
+        if not args.splitter_checkpoint:
+            parser.error("--splitter-checkpoint is required for --splitter-mode rl")
+        splitter = MaxSimSplitter(
+            checkpoint_path=args.splitter_checkpoint,
+            device=args.splitter_device,
+            embedding_model=shared_embedder,
+            max_segments=int(args.splitter_max_segments),
+            overlap_tokens=int(args.splitter_overlap_tokens),
+            include_full_embedding=bool(args.include_full_embedding),
+        )
 
     if args.similarity_evaluator == "string":
         similarity_evaluator = StringComparisonSimilarityEvaluator()

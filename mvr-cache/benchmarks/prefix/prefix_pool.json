@@ -1,0 +1,54 @@
+{
+ "description": "Answer-irrelevant shared sentences for the prefix stress test. 8 slots x 5 variants. One English sentence each, 15-20 BGE tokens (bge-base-en-v1.5, no special tokens), no punctuation except the final period. Fixed before seeing any result.",
+ "tokenizer": "BAAI/bge-base-en-v1.5",
+ "slots": [
+  {"name": "role", "variants": [
+   "You are a helpful assistant that answers questions for users of an online service.",
+   "You are an assistant that works for a large web platform and answers user questions.",
+   "Act as a reliable assistant who helps users of this platform with their questions.",
+   "You are a support assistant that responds to user requests sent to this website every day.",
+   "You are a virtual assistant that helps visitors of this service find quick answers."]},
+  {"name": "tone", "variants": [
+   "Please keep your answer short and polite and avoid using any unnecessary words in the reply.",
+   "Use a calm and courteous tone and keep the answer as brief as possible.",
+   "Respond politely in plain language and do not add any extra explanation to the answer.",
+   "Keep the reply concise and respectful and avoid writing long or complicated sentences.",
+   "Answer in a neutral and respectful tone using only as few words as are needed."]},
+  {"name": "format", "variants": [
+   "Return only the final answer without adding any additional text or special formatting to it.",
+   "Do not include headings or lists and give only the answer that is being requested.",
+   "Write the whole answer on a single line without quotes or any extra symbols around it.",
+   "Give the answer directly and do not repeat the original question anywhere in your reply.",
+   "Output just the answer itself with no introduction or closing remarks of any kind at all."]},
+  {"name": "safety", "variants": [
+   "Do not share harmful content and politely refuse any requests that could cause real damage.",
+   "Avoid unsafe advice and follow the usage policy of this service at all times.",
+   "Never produce offensive material and always stay within the safety guidelines of the service.",
+   "If a request seems dangerous do not help with it and keep the reply safe.",
+   "Follow all of the safety rules and never generate content that may harm anyone in any way."]},
+  {"name": "privacy", "variants": [
+   "Do not ask for or reveal personal information such as names or home addresses.",
+   "Keep all user data private and never store any sensitive details that come from the chat.",
+   "Protect the privacy of users and do not repeat any personal details they share.",
+   "Never request passwords or payment details from the user at any point during this session.",
+   "Treat every incoming message as confidential and do not disclose its content to anyone else."]},
+  {"name": "language", "variants": [
+   "Reply in English even if the user writes the request in a different language.",
+   "Use simple English words so that the answer is easy for anyone to understand.",
+   "Write in standard English and avoid slang or uncommon abbreviations in the reply.",
+   "Answer in clear English that any member of a general audience can read without much effort.",
+   "Keep the language simple and avoid using technical terms unless they are really required here."]},
+  {"name": "accuracy", "variants": [
+   "Base the answer only on the given input and do not guess any missing facts.",
+   "If you are unsure about something in the request then do not make up any new information.",
+   "Check the input carefully before answering and make sure you stay consistent with what it says.",
+   "Rely only on the provided text and avoid adding any outside knowledge to the final answer.",
+   "Think about the request carefully and then give the most accurate answer that you possibly can."]},
+  {"name": "session", "variants": [
+   "This conversation is part of an automated evaluation run that is performed on the service.",
+   "The request below was sent by a user through the public interface of the platform.",
+   "This message comes from a routine session that is handled by the main assistant system.",
+   "The following input was submitted by a user through the standard request form on the website.",
+   "This session is logged for quality checks by the team that runs the service."]}
+ ]
+}

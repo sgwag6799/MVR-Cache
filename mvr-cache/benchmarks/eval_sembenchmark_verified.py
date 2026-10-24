@@ -229,6 +229,11 @@ def main() -> None:
         help="How to evaluate correctness (match benchmark.py run-combination).",
     )
     parser.add_argument("--max-capacity", type=int, default=200_000)
+    # [추가: prefix-stress-test] vCache 탐색/활용 난수(random.uniform)를 고정해 시드끼리 짝지어 비교
+    parser.add_argument("--seed", type=int, default=None, help="Seed the global random generators (explore/exploit draw).")
+    # [추가: prefix-stress-test] 이 열이 True인 행만 평가 (예: fits_all_levels → 모든 단계에서 512토큰 이하인 같은 행 집합)
+    parser.add_argument("--filter-true-column", default=None,
+                        help="Keep only rows where this boolean column is True (e.g. fits_all_levels).")
     parser.add_argument(
         "--output-json",
         type=str,
@@ -260,6 +265,12 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.seed is not None:
+        import random as _random
+
+        _random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
 
     # Mirror: must be set before importing HF libs in a fresh process.
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
@@ -333,6 +344,10 @@ def main() -> None:
                     f"Local dataset is missing required LLM response column '{args.llm_col}'. Available columns: {list(df.columns)}"
                 )
 
+        # [추가: prefix-stress-test] 지정한 열이 True인 행만 남긴다 (행 순서는 그대로)
+        if args.filter_true_column:
+            df = df[df[args.filter_true_column].astype(bool)].reset_index(drop=True)
+            print(f"[filter] {args.filter_true_column}: {len(df)} rows kept")
         rows = df.to_dict("records")
         if args.max_samples is not None:
             rows = rows[: int(args.max_samples)]

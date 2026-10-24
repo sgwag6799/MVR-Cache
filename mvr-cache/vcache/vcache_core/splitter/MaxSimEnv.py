@@ -1,12 +1,20 @@
 import torch
 import torch.nn.functional as F
 from tensordict.tensordict import TensorDict
-from torchrl.data import (
-    BoundedTensorSpec,
-    CompositeSpec,
-    UnboundedContinuousTensorSpec,
-    DiscreteTensorSpec
-)
+try:
+    from torchrl.data import (
+        BoundedTensorSpec,
+        CompositeSpec,
+        UnboundedContinuousTensorSpec,
+        DiscreteTensorSpec
+    )
+except ImportError:  # torchrl >= 0.11 renamed the spec classes
+    from torchrl.data import (
+        Bounded as BoundedTensorSpec,
+        Composite as CompositeSpec,
+        UnboundedContinuous as UnboundedContinuousTensorSpec,
+        Categorical as DiscreteTensorSpec,
+    )
 
 
 from .embedding_model import EmbeddingModel

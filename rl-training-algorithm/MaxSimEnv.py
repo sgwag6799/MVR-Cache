@@ -5,12 +5,20 @@ import os
 import numpy as np
 from tensordict.tensordict import TensorDict
 from torch.utils.data import Dataset
-from torchrl.data import (
-    BoundedTensorSpec,
-    CompositeSpec,
-    UnboundedContinuousTensorSpec,
-    DiscreteTensorSpec
-)
+try:
+    from torchrl.data import (
+        BoundedTensorSpec,
+        CompositeSpec,
+        UnboundedContinuousTensorSpec,
+        DiscreteTensorSpec
+    )
+except ImportError:  # torchrl >= 0.11 renamed the spec classes
+    from torchrl.data import (
+        Bounded as BoundedTensorSpec,
+        Composite as CompositeSpec,
+        UnboundedContinuous as UnboundedContinuousTensorSpec,
+        Categorical as DiscreteTensorSpec,
+    )
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))

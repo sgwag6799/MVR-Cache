@@ -1,0 +1,356 @@
+"""Stage 1: offline pair diagnostics for the shared-prefix stress test (GPU).
+
+For each level L (and the fixed-prefix reference) it encodes train / val / test with
+bge-base-en-v1.5, cuts every prompt with the rules in prefix_split.py, and scores the
+same candidate pairs four ways:
+
+  M1  single vector: cosine of the mean of all tokens incl. [CLS] (what vCache uses), (x+1)/2
+  M2  MVR, uniform weights: symmetric SMaxSim over segments, (x+1)/2, no full-sentence row
+  M3  MVR, learned weights: Linear(768 -> 1), softmax over the segments of a prompt, zero init,
+      trained per level on that level's train split (BCE, positive-class weighting,
+      Adam 1e-3, batch 2048, 20 epochs, best val AUC). It never sees which segment is prefix
+  M4  MVR, prefix segments weight 0 (upper bound for any weighting)
+
+Pairs: test anchors (6,000, seed 0, same rows at every level) x 10 nearest neighbours by
+the M1 vector over the test split, searched again at every level. Only rows that fit in
+512 tokens at the largest level are used (same rows everywhere, so no level truncates).
+
+Metrics per level x condition x task (ALL + each sub-task):
+  ceiling@10      share of anchors with at least one correct candidate (same for every condition)
+  top1_acc        the condition's #1 candidate is correct
+  auc_selected    AUC of (s, c) of each anchor's #1 candidate     <- gate metric
+  auc_pairs       AUC over all anchor x candidate pairs
+  tpr_at_fpr1     TPR at 1% FPR over all pairs (team proxy)
+
+Outputs in --out: prefix_offline.csv, prefix_w_<mode>_L<L>.pt, prefix_gate.json, run meta.
+
+Example (Colab, L4 GPU):
+  python -m benchmarks.prefix.prefix_offline \
+    --data /content/drive/MyDrive/mvr_eval/prefix/data \
+    --out  /content/drive/MyDrive/mvr_eval/prefix/offline
+"""
+# [새 파일] 1단계: 오프라인 쌍 진단 (단계 × 조건 M1~M4 × 과제)
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import time
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from benchmarks.prefix._shared import ps
+
+CONDITIONS = ("M1", "M2", "M3", "M4")
+
+
+# ----------------------------------------------------------------------------- 인코딩
+
+
+@torch.no_grad()
+def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=True):
+    """Segment vectors (list of [S,H] fp16 CPU), prefix flags (list of bool tensors),
+    single vectors [N,H] (fp32, L2-normalised)."""
+    texts = df["prompt"].astype(str).tolist()
+    n_chars = df["prefix_chars"].astype(int).tolist()
+    order = np.argsort([len(t) for t in texts])  # 길이순으로 묶어 패딩 낭비를 줄임
+    segs, flags, knn = [None] * len(texts), [None] * len(texts), [None] * len(texts)
+    for b in range(0, len(texts), batch_size):
+        idx = order[b:b + batch_size]
+        enc = tok([texts[i] for i in idx], return_tensors="pt", padding=True, truncation=True,
+                  max_length=ps.MAX_LEN, return_offsets_mapping=True)
+        offsets = enc.pop("offset_mapping").tolist()
+        enc = {k: v.to(device) for k, v in enc.items()}
+        with torch.autocast("cuda", dtype=torch.float16, enabled=fp16 and device.startswith("cuda")):
+            hs = lm(**enc).last_hidden_state
+        hs = hs.float()
+        for j, i in enumerate(idx):
+            length = int(enc["attention_mask"][j].sum())
+            ids = enc["input_ids"][j][:length].tolist()
+            tokens = tok.convert_ids_to_tokens(ids)
+            off = [tuple(o) for o in offsets[j][:length]]
+            pend = ps.prefix_token_end(off, n_chars[i])
+            cuts = ps.cut_points(tokens, length, max_cuts=max_cuts, cap_scope=cap_scope, prefix_end=pend)
+            spans = ps.segment_spans(length, cuts)
+            h = hs[j]
+            segs[i] = torch.stack([h[s:e].mean(0) for s, e in spans]).half().cpu()
+            flags[i] = torch.tensor(ps.prefix_segment_flags(spans, pend))
+            knn[i] = h[:length].mean(0).cpu()  # [CLS]·[SEP] 포함 평균 = EmbeddingModel.get_embedding
+    return segs, flags, F.normalize(torch.stack(knn), dim=-1)
+
+
+def neighbours(knn, query_idx, k, device, chunk=2048):
+    """Top-k by cosine over all rows of `knn`, excluding the query itself. [len(query_idx), k]."""
+    bank = knn.to(device)
+    out = []
+    for b in range(0, len(query_idx), chunk):
+        q = torch.as_tensor(query_idx[b:b + chunk])
+        sim = bank[q.to(device)] @ bank.T
+        sim[torch.arange(len(q)), q.to(device)] = -2.0  # 자기 자신 제외
+        out.append(sim.topk(k, dim=1).indices.cpu())
+    return torch.cat(out).numpy()
+
+
+# ----------------------------------------------------------------------------- 점수
+
+
+def pad(seg_list, flag_list, idx, device):
+    rows = [seg_list[i].float() for i in idx]
+    s_max = max(r.shape[0] for r in rows)
+    h = rows[0].shape[1]
+    x = torch.zeros(len(rows), s_max, h)
+    m = torch.zeros(len(rows), s_max, dtype=torch.bool)
+    pf = torch.zeros(len(rows), s_max, dtype=torch.bool)
+    for j, r in enumerate(rows):
+        x[j, : r.shape[0]] = r
+        m[j, : r.shape[0]] = True
+        pf[j, : r.shape[0]] = flag_list[idx[j]]
+    return x.to(device), m.to(device), pf.to(device)
+
+
+class SegmentHead(nn.Module):
+    """M3: Linear(H -> 1), zero init, softmax over the segments of each prompt."""
+
+    def __init__(self, dim: int = 768):
+        super().__init__()
+        self.lin = nn.Linear(dim, 1)
+        nn.init.zeros_(self.lin.weight)
+        nn.init.zeros_(self.lin.bias)
+
+    def forward(self, x, m):
+        logits = self.lin(x).squeeze(-1).masked_fill(~m, float("-inf"))
+        return torch.softmax(logits, dim=-1)
+
+
+def weights(cond, x, m, pf, head):
+    if cond == "M3":
+        return head(x, m)
+    keep = m & ~pf if cond == "M4" else m
+    keep = torch.where(keep.any(1, keepdim=True), keep, m)  # 전부 공통 문단이면 균등으로 (원본이 있어 실제로는 없음)
+    w = keep.float()
+    return w / w.sum(1, keepdim=True)
+
+
+def smaxsim01(qx, qm, qw, cx, cm, cw):
+    """Symmetric weighted SMaxSim -> [0, 1] (same as VerifiedSplitterDecisionPolicy._maxsim_from_tensors)."""
+    qn, cn = F.normalize(qx, dim=-1), F.normalize(cx, dim=-1)
+    cos = torch.bmm(qn, cn.transpose(1, 2))
+    row = cos.masked_fill(~cm.unsqueeze(1), -1e4).max(2).values.masked_fill(~qm, 0.0)
+    col = cos.masked_fill(~qm.unsqueeze(2), -1e4).max(1).values.masked_fill(~cm, 0.0)
+    raw = 0.5 * (qw * row).sum(1) + 0.5 * (cw * col).sum(1)
+    return ((raw + 1.0) * 0.5).clamp(0.0, 1.0)
+
+
+def score_pairs(cond, bank_q, bank_c, qi, ci, device, head=None, knn_q=None, knn_c=None, bs=4096):
+    if cond == "M1":
+        s = (knn_q[qi] * knn_c[ci]).sum(-1)
+        return ((s + 1) * 0.5).numpy()
+    out = []
+    for b in range(0, len(qi), bs):
+        qx, qm, qpf = pad(*bank_q, qi[b:b + bs], device)
+        cx, cm, cpf = pad(*bank_c, ci[b:b + bs], device)
+        out.append(smaxsim01(qx, qm, weights(cond, qx, qm, qpf, head),
+                             cx, cm, weights(cond, cx, cm, cpf, head)).float().cpu())
+    return torch.cat(out).numpy()
+
+
+# ----------------------------------------------------------------------------- 지표
+
+
+def auc(s, c):
+    pos, neg = s[c == 1], s[c == 0]
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    r = pd.Series(np.concatenate([pos, neg])).rank().to_numpy()
+    return float((r[: len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
+
+
+def tpr_at_fpr(s, c, fpr=0.01):
+    pos, neg = s[c == 1], s[c == 0]
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    thr = np.quantile(neg, 1 - fpr)
+    return float((pos > thr).mean())
+
+
+def metrics(scores, c):
+    """scores, c: [A, k] arrays for a set of anchors."""
+    top = scores.argmax(1)
+    sel_s, sel_c = scores[np.arange(len(top)), top], c[np.arange(len(top)), top]
+    return {
+        "n_anchors": int(len(scores)),
+        "ceiling10": float(c.any(1).mean()),
+        "top1_acc": float(sel_c.mean()),
+        "auc_selected": auc(sel_s, sel_c),
+        "auc_pairs": auc(scores.ravel(), c.ravel()),
+        "tpr_at_fpr1": tpr_at_fpr(scores.ravel(), c.ravel()),
+    }
+
+
+# ----------------------------------------------------------------------------- M3 학습
+
+
+def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, seed, dim):
+    torch.manual_seed(seed)
+    head = SegmentHead(dim).to(device)
+    calib = nn.Parameter(torch.tensor([10.0, -5.0], device=device))  # 점수 → 로짓 (a·s + b)
+    opt = torch.optim.Adam(list(head.parameters()) + [calib], lr=lr)
+    qi, ci, y = pairs_tr
+    y_t = torch.tensor(y, dtype=torch.float32, device=device)
+    pos_weight = (1 - y_t.mean()) / y_t.mean().clamp_min(1e-6)  # 클래스 비율 보정
+    best = {"epoch": -1, "val_auc": -1.0, "state": None}
+    log = []
+    for ep in range(epochs):
+        head.train()
+        perm = np.random.default_rng(seed + ep).permutation(len(y))
+        tot = 0.0
+        for b in range(0, len(perm), batch):
+            j = perm[b:b + batch]
+            qx, qm, _ = pad(*bank_tr, qi[j], device)
+            cx, cm, _ = pad(*bank_tr, ci[j], device)
+            s = smaxsim01(qx, qm, head(qx, qm), cx, cm, head(cx, cm))
+            loss = F.binary_cross_entropy_with_logits(calib[0] * s + calib[1], y_t[j], pos_weight=pos_weight)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            tot += loss.item() * len(j)
+        head.eval()
+        with torch.no_grad():
+            vs = score_pairs("M3", bank_va, bank_va, pairs_va[0], pairs_va[1], device, head=head)
+        va = auc(vs, pairs_va[2])
+        log.append({"epoch": ep, "train_bce": tot / len(y), "val_auc": va})
+        if va > best["val_auc"]:
+            best = {"epoch": ep, "val_auc": va, "state": {k: v.detach().clone() for k, v in head.state_dict().items()}}
+    head.load_state_dict(best["state"])
+    head.eval()
+    return head, {"selected_epoch": best["epoch"], "selected_val_auc": best["val_auc"], "epochs": log}
+
+
+def within_pairs(knn, rows, labels, k, device):
+    """Each row x its k nearest rows (same split), label = same normalised answer."""
+    nb = neighbours(knn, rows, k, device)
+    qi = np.repeat(rows, k)
+    ci = nb.reshape(-1)
+    y = (labels[qi] == labels[ci]).astype(np.float32)
+    return qi, ci, y
+
+
+# ----------------------------------------------------------------------------- 메인
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--data", required=True, help="Output folder of make_prefix_data.py")
+    p.add_argument("--out", required=True)
+    p.add_argument("--levels", type=int, nargs="+", default=[0, 2, 4, 8])
+    p.add_argument("--fixed-levels", type=int, nargs="+", default=[4])
+    p.add_argument("--model", default="BAAI/bge-base-en-v1.5")
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--no-fp16", action="store_true")
+    p.add_argument("--anchors", type=int, default=6000)
+    p.add_argument("--k", type=int, default=10)
+    p.add_argument("--pair-seed", type=int, default=0)
+    p.add_argument("--max-cuts", type=int, default=32)
+    p.add_argument("--cap-scope", default="original", choices=["original", "all"])
+    p.add_argument("--row-filter", default="fits_all_levels", choices=["fits_all_levels", "none"])
+    p.add_argument("--resp-col", default="response_llama_3_8b")
+    p.add_argument("--epochs", type=int, default=20)
+    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--batch", type=int, default=2048)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--quick", type=int, default=None, help="Use only the first N rows per split (smoke test).")
+    p.add_argument("--gate-drop", type=float, default=0.03)
+    p.add_argument("--gate-recovery", type=float, default=0.5)
+    args = p.parse_args()
+
+    from transformers import AutoModel, AutoTokenizer
+
+    os.makedirs(args.out, exist_ok=True)
+    tok = AutoTokenizer.from_pretrained(args.model)
+    lm = AutoModel.from_pretrained(args.model).to(args.device).eval()
+    fp16 = not args.no_fp16
+
+    def load(mode, level, split):
+        df = pd.read_parquet(os.path.join(args.data, mode, f"L{level}", f"{split}.parquet"))
+        if args.row_filter == "fits_all_levels":
+            df = df[df["fits_all_levels"]].reset_index(drop=True)
+        if args.quick:
+            df = df.head(args.quick)
+        return df
+
+    runs = [("variant", L) for L in args.levels] + [("fixed", L) for L in args.fixed_levels]
+    rows_out, gate_auc, train_logs = [], {}, {}
+    for mode, level in runs:
+        t0 = time.time()
+        dfs = {s: load(mode, level, s) for s in ("train", "val", "test")}
+        banks, knns, labels = {}, {}, {}
+        for s, df in dfs.items():
+            segs, flags, knn = encode_split(df, tok, lm, args.device, args.max_cuts, args.cap_scope, fp16=fp16)
+            banks[s], knns[s] = (segs, flags), knn
+            labels[s] = df[args.resp_col].map(ps.normalize_answer).to_numpy()
+        dim = knns["test"].shape[1]
+
+        # 테스트 쌍: 앵커는 모든 단계에서 같은 행 (행 순서·필터가 같으므로 같은 위치)
+        n_test = len(dfs["test"])
+        anchors = np.sort(np.random.default_rng(args.pair_seed).choice(n_test, min(args.anchors, n_test), replace=False))
+        nb = neighbours(knns["test"], anchors, args.k, args.device)
+        qi, ci = np.repeat(anchors, args.k), nb.reshape(-1)
+        c = (labels["test"][qi] == labels["test"][ci]).astype(int).reshape(-1, args.k)
+
+        # M3: 이 단계의 train으로 학습, val로 에폭 선택
+        tr_pairs = within_pairs(knns["train"], np.arange(len(dfs["train"])), labels["train"], args.k, args.device)
+        va_pairs = within_pairs(knns["val"], np.arange(len(dfs["val"])), labels["val"], args.k, args.device)
+        head, tlog = train_head(banks["train"], tr_pairs, banks["val"], va_pairs, args.device,
+                                args.epochs, args.lr, args.batch, args.seed, dim)
+        train_logs[f"{mode}/L{level}"] = {k: v for k, v in tlog.items() if k != "epochs"} | {"epochs": tlog["epochs"]}
+        torch.save({"state": head.state_dict(), "dim": dim, "mode": mode, "level": level,
+                    "max_cuts": args.max_cuts, "cap_scope": args.cap_scope, "model": args.model,
+                    "selected_epoch": tlog["selected_epoch"], "selected_val_auc": tlog["selected_val_auc"]},
+                   os.path.join(args.out, f"prefix_w_{mode}_L{level}.pt"))
+
+        tasks = dfs["test"]["dataset_name"].to_numpy()[anchors]
+        for cond in CONDITIONS:
+            sc = score_pairs(cond, banks["test"], banks["test"], qi, ci, args.device, head=head,
+                             knn_q=knns["test"], knn_c=knns["test"]).reshape(-1, args.k)
+            for task in ["ALL"] + sorted(set(tasks)):
+                m = np.ones(len(tasks), bool) if task == "ALL" else tasks == task
+                rows_out.append({"mode": mode, "level": level, "condition": cond, "task": task,
+                                 **metrics(sc[m], c[m])})
+                if task == "ALL":
+                    gate_auc[(mode, level, cond)] = rows_out[-1]["auc_selected"]
+        print(f"[{mode} L{level}] {time.time() - t0:.0f}s  " + "  ".join(
+            f"{cd} auc_sel={gate_auc[(mode, level, cd)]:.4f}" for cd in CONDITIONS))
+        pd.DataFrame(rows_out).to_csv(os.path.join(args.out, "prefix_offline.csv"), index=False)
+
+    # 통과 기준 (1단계 → 2단계): L ≥ 4 에서 M2 AUC가 L0 대비 0.03 이상 하락 + M3 회복률 ≥ 0.5
+    gate = {"metric": "auc_selected", "drop_min": args.gate_drop, "recovery_min": args.gate_recovery, "levels": {}}
+    r = gate_auc.get(("variant", 0, "M2"))
+    for L in args.levels:
+        if L < 4 or r is None:
+            continue
+        m2, m3, m4 = (gate_auc.get(("variant", L, x)) for x in ("M2", "M3", "M4"))
+        drop = r - m2
+        rec = (m3 - m2) / drop if drop > 0 else float("nan")
+        gate["levels"][f"L{L}"] = {"R": r, "M2": m2, "M3": m3, "M4": m4, "drop": drop, "recovery": rec,
+                                   "pass": bool(drop >= args.gate_drop and rec >= args.gate_recovery)}
+    passed = [k for k, v in gate["levels"].items() if v["pass"]]
+    gate["stage2_level"] = max(passed, key=lambda k: int(k[1:])) if passed else None
+    with open(os.path.join(args.out, "prefix_gate.json"), "w") as f:
+        json.dump(gate, f, indent=1)
+    meta = {"args": vars(args), "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                                                            text=True).stdout.strip(),
+            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+            "m3_training": train_logs}
+    with open(os.path.join(args.out, "prefix_offline_meta.json"), "w") as f:
+        json.dump(meta, f, indent=1, default=str)
+    print(json.dumps(gate, indent=1))
+
+
+if __name__ == "__main__":
+    main()

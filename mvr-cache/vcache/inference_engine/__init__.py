@@ -3,7 +3,11 @@ from vcache.inference_engine.strategies.benchmark import BenchmarkInferenceEngin
 from vcache.inference_engine.strategies.lang_chain import LangChainInferenceEngine
 from vcache.inference_engine.strategies.open_ai import OpenAIInferenceEngine
 from vcache.inference_engine.strategies.silicon_flow import SiliconFlowInferenceEngine
-from vcache.inference_engine.strategies.vllm import VLLMInferenceEngine
+# [수정: prefix-stress-test] vllm 없이도 import 되게 (평가는 BenchmarkInferenceEngine만 사용)
+try:
+    from vcache.inference_engine.strategies.vllm import VLLMInferenceEngine
+except ImportError:
+    VLLMInferenceEngine = None
 
 __all__ = [
     "InferenceEngine",
