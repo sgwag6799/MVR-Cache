@@ -11,6 +11,11 @@ same candidate pairs four ways:
       Adam 1e-3, batch 2048, 20 epochs, best val AUC). It never sees which segment is prefix
   M4  MVR, prefix segments weight 0 (upper bound for any weighting)
 
+Exploratory, label-free weightings (only with --extra-conditions; same formulas as the
+team RuleSplitter on gpu-production, statistics from that level's train split):
+  M5  idf:      mean IDF of the segment's tokens, IDF = log((N+1)/(df+1)) + 1
+  M6  centroid: 1 - cos(segment, mean of L2-normalised train segment vectors), min 1e-3
+
 Pairs: test anchors (6,000, seed 0, same rows at every level) x 10 nearest neighbours by
 the M1 vector over the test split, searched again at every level. Only rows that fit in
 512 tokens at the largest level are used (same rows everywhere, so no level truncates).
@@ -48,6 +53,8 @@ import torch.nn.functional as F
 from benchmarks.prefix._shared import ps
 
 CONDITIONS = ("M1", "M2", "M3", "M4")
+EXTRA_CONDITIONS = ("M5", "M6")  # 탐색용: M5 idf, M6 centroid (라벨 미사용)
+MIN_WEIGHT = 1e-3  # gpu-production RuleSplitter와 같은 하한
 
 
 # ----------------------------------------------------------------------------- 인코딩
@@ -56,11 +63,12 @@ CONDITIONS = ("M1", "M2", "M3", "M4")
 @torch.no_grad()
 def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=True):
     """Segment vectors (list of [S,H] fp16 CPU), prefix flags (list of bool tensors),
-    single vectors [N,H] (fp32, L2-normalised)."""
+    single vectors [N,H] (fp32, L2-normalised), per-segment token ids (list of lists of tensors)."""
     texts = df["prompt"].astype(str).tolist()
     n_chars = df["prefix_chars"].astype(int).tolist()
     order = np.argsort([len(t) for t in texts])  # 길이순으로 묶어 패딩 낭비를 줄임
     segs, flags, knn = [None] * len(texts), [None] * len(texts), [None] * len(texts)
+    seg_ids = [None] * len(texts)  # M5(idf)용 조각별 토큰 번호
     for b in range(0, len(texts), batch_size):
         idx = order[b:b + batch_size]
         enc = tok([texts[i] for i in idx], return_tensors="pt", padding=True, truncation=True,
@@ -82,7 +90,24 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
             segs[i] = torch.stack([h[s:e].mean(0) for s, e in spans]).half().cpu()
             flags[i] = torch.tensor(ps.prefix_segment_flags(spans, pend))
             knn[i] = h[:length].mean(0).cpu()  # [CLS]·[SEP] 포함 평균 = EmbeddingModel.get_embedding
-    return segs, flags, F.normalize(torch.stack(knn), dim=-1)
+            seg_ids[i] = [torch.tensor(ids[s:e]) for s, e in spans]
+    return segs, flags, F.normalize(torch.stack(knn), dim=-1), seg_ids
+
+
+def idf_table(seg_ids, vocab):
+    """IDF over prompts (each prompt counts a token once): log((N+1)/(df+1)) + 1."""
+    doc_freq = torch.zeros(vocab)
+    for row in seg_ids:
+        doc_freq[torch.unique(torch.cat(row))] += 1
+    return torch.log((len(seg_ids) + 1) / (doc_freq + 1)) + 1.0
+
+
+def fixed_weights(cond, segs, seg_ids, idf, centroid):
+    """Label-free per-segment weights (unnormalised) for M5 / M6, one tensor per prompt."""
+    if cond == "M5":
+        return [torch.stack([idf[t].mean() for t in row]).clamp_min(MIN_WEIGHT) for row in seg_ids]
+    return [(1.0 - F.cosine_similarity(s.float(), centroid.unsqueeze(0), dim=-1)).clamp_min(MIN_WEIGHT)
+            for s in segs]
 
 
 def neighbours(knn, query_idx, k, device, chunk=2048):
@@ -128,9 +153,18 @@ class SegmentHead(nn.Module):
         return torch.softmax(logits, dim=-1)
 
 
-def weights(cond, x, m, pf, head):
+def pad_weights(w_list, idx, s_max, device):
+    w = torch.zeros(len(idx), s_max)
+    for j, i in enumerate(idx):
+        w[j, : w_list[i].shape[0]] = w_list[i]
+    return w.to(device)
+
+
+def weights(cond, x, m, pf, head, fw=None):
     if cond == "M3":
         return head(x, m)
+    if cond in EXTRA_CONDITIONS:
+        return fw / fw.sum(1, keepdim=True)  # 패딩 칸은 0이므로 조각끼리 합 1
     keep = m & ~pf if cond == "M4" else m
     keep = torch.where(keep.any(1, keepdim=True), keep, m)  # 전부 공통 문단이면 균등으로 (원본이 있어 실제로는 없음)
     w = keep.float()
@@ -148,7 +182,8 @@ def smaxsim01(qx, qm, qw, cx, cm, cw):
 
 
 @torch.no_grad()
-def score_pairs(cond, bank_q, bank_c, qi, ci, device, head=None, knn_q=None, knn_c=None, bs=4096):
+def score_pairs(cond, bank_q, bank_c, qi, ci, device, head=None, knn_q=None, knn_c=None, bs=4096,
+                fw_q=None, fw_c=None):
     if cond == "M1":
         s = (knn_q[qi] * knn_c[ci]).sum(-1)
         return ((s + 1) * 0.5).numpy()
@@ -156,8 +191,10 @@ def score_pairs(cond, bank_q, bank_c, qi, ci, device, head=None, knn_q=None, knn
     for b in range(0, len(qi), bs):
         qx, qm, qpf = pad(*bank_q, qi[b:b + bs], device)
         cx, cm, cpf = pad(*bank_c, ci[b:b + bs], device)
-        out.append(smaxsim01(qx, qm, weights(cond, qx, qm, qpf, head),
-                             cx, cm, weights(cond, cx, cm, cpf, head)).float().cpu())
+        qfw = pad_weights(fw_q, qi[b:b + bs], qx.shape[1], device) if fw_q is not None else None
+        cfw = pad_weights(fw_c, ci[b:b + bs], cx.shape[1], device) if fw_c is not None else None
+        out.append(smaxsim01(qx, qm, weights(cond, qx, qm, qpf, head, qfw),
+                             cx, cm, weights(cond, cx, cm, cpf, head, cfw)).float().cpu())
     return torch.cat(out).numpy()
 
 
@@ -268,7 +305,12 @@ def main() -> None:
     p.add_argument("--quick", type=int, default=None, help="Use only the first N rows per split (smoke test).")
     p.add_argument("--gate-drop", type=float, default=0.03)
     p.add_argument("--gate-recovery", type=float, default=0.5)
+    p.add_argument("--extra-conditions", nargs="*", default=[], choices=EXTRA_CONDITIONS,
+                   help="Exploratory label-free weightings to add (M5 idf, M6 centroid).")
+    p.add_argument("--save-scores", action="store_true",
+                   help="Save per-pair scores and labels (scores_<mode>_L<L>.npz) for bootstrap CIs.")
     args = p.parse_args()
+    conditions = CONDITIONS + tuple(args.extra_conditions)
 
     from transformers import AutoModel, AutoTokenizer
 
@@ -290,12 +332,21 @@ def main() -> None:
     for mode, level in runs:
         t0 = time.time()
         dfs = {s: load(mode, level, s) for s in ("train", "val", "test")}
-        banks, knns, labels = {}, {}, {}
+        banks, knns, labels, ids = {}, {}, {}, {}
         for s, df in dfs.items():
-            segs, flags, knn = encode_split(df, tok, lm, args.device, args.max_cuts, args.cap_scope, fp16=fp16)
-            banks[s], knns[s] = (segs, flags), knn
+            segs, flags, knn, seg_ids = encode_split(df, tok, lm, args.device, args.max_cuts, args.cap_scope,
+                                                     fp16=fp16)
+            banks[s], knns[s], ids[s] = (segs, flags), knn, seg_ids
             labels[s] = df[args.resp_col].map(ps.normalize_answer).to_numpy()
         dim = knns["test"].shape[1]
+
+        # M5·M6 통계는 이 단계의 train에서만 계산 (라벨 미사용)
+        fixed_w = {}
+        if args.extra_conditions:
+            idf = idf_table(ids["train"], len(tok))
+            centroid = torch.cat([F.normalize(s.float(), dim=-1) for s in banks["train"][0]]).mean(0)
+            for cond in args.extra_conditions:
+                fixed_w[cond] = fixed_weights(cond, banks["test"][0], ids["test"], idf, centroid)
 
         # 테스트 쌍: 앵커는 모든 단계에서 같은 행 (행 순서·필터가 같으므로 같은 위치)
         n_test = len(dfs["test"])
@@ -316,17 +367,23 @@ def main() -> None:
                    os.path.join(args.out, f"prefix_w_{mode}_L{level}.pt"))
 
         tasks = dfs["test"]["dataset_name"].to_numpy()[anchors]
-        for cond in CONDITIONS:
+        saved = {}
+        for cond in conditions:
+            fw = fixed_w.get(cond)
             sc = score_pairs(cond, banks["test"], banks["test"], qi, ci, args.device, head=head,
-                             knn_q=knns["test"], knn_c=knns["test"]).reshape(-1, args.k)
+                             knn_q=knns["test"], knn_c=knns["test"], fw_q=fw, fw_c=fw).reshape(-1, args.k)
+            saved[cond] = sc
             for task in ["ALL"] + sorted(set(tasks)):
                 m = np.ones(len(tasks), bool) if task == "ALL" else tasks == task
                 rows_out.append({"mode": mode, "level": level, "condition": cond, "task": task,
                                  **metrics(sc[m], c[m])})
                 if task == "ALL":
                     gate_auc[(mode, level, cond)] = rows_out[-1]["auc_selected"]
+        if args.save_scores:
+            np.savez_compressed(os.path.join(args.out, f"scores_{mode}_L{level}.npz"), c=c, tasks=tasks.astype(str),
+                                anchors=anchors, **saved)
         print(f"[{mode} L{level}] {time.time() - t0:.0f}s  " + "  ".join(
-            f"{cd} auc_sel={gate_auc[(mode, level, cd)]:.4f}" for cd in CONDITIONS))
+            f"{cd} auc_sel={gate_auc[(mode, level, cd)]:.4f}" for cd in conditions))
         pd.DataFrame(rows_out).to_csv(os.path.join(args.out, "prefix_offline.csv"), index=False)
 
     # 통과 기준 (1단계 → 2단계): L ≥ 4 에서 M2 AUC가 L0 대비 0.03 이상 하락 + M3 회복률 ≥ 0.5
