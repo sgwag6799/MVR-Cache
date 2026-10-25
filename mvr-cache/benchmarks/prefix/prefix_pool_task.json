@@ -1,0 +1,258 @@
+{
+ "description": "Task-specific answer-irrelevant shared sentences (prefix stress test, task-context variant). Per sub-task 8 slots x 5 variants, same slot roles as prefix_pool.json. One English sentence each, 15-20 BGE tokens (no special tokens), no punctuation except the final period. Written after the first stage 1 results (exploratory, not part of the fixed design).",
+ "tokenizer": "BAAI/bge-base-en-v1.5",
+ "tasks": {
+  "ecommerce_dataset": {
+   "slots": [
+    {
+     "name": "role",
+     "variants": [
+      "You are an assistant for an online shopping site that helps sort product listings for the catalog team.",
+      "You are a catalog assistant that works for a large online marketplace and reviews new product listings.",
+      "Act as a helpful assistant for an online store that organizes product descriptions sent by sellers.",
+      "You are a support assistant for a retail website that checks product listings uploaded by merchants every day.",
+      "You are a virtual assistant that helps the staff of an online shop manage its product pages."
+     ]
+    },
+    {
+     "name": "tone",
+     "variants": [
+      "Please keep your answer short and polite and avoid any unnecessary words about the product listing.",
+      "Use a calm and professional tone and keep the reply about the listing as brief as possible.",
+      "Respond politely in plain language and do not add extra comments about the seller or the price.",
+      "Keep the reply concise and neutral and avoid writing long sentences about the product details.",
+      "Answer in a neutral tone suitable for catalog staff using only as few words as are needed."
+     ]
+    },
+    {
+     "name": "format",
+     "variants": [
+      "Return only the final answer without adding any product summary or special formatting to it.",
+      "Do not include headings or bullet lists and give only the answer the catalog team requested.",
+      "Write the whole answer on a single line without quoting any part of the product description.",
+      "Give the answer as plain text with no extra notes so it can be stored in the catalog system.",
+      "Reply with the answer alone and do not repeat the product title or the name of the seller."
+     ]
+    },
+    {
+     "name": "safety",
+     "variants": [
+      "Do not recommend any product or seller and do not give advice about prices or discounts.",
+      "Avoid making claims about product safety or quality that are not stated in the listing itself.",
+      "Never encourage a purchase and do not compare this item with products sold by other stores.",
+      "Do not include links to other shops or any promotional content in your reply to the team.",
+      "Refuse to share opinions about brands and keep the reply free of any marketing language."
+     ]
+    },
+    {
+     "name": "privacy",
+     "variants": [
+      "Do not mention or store any personal details of sellers or buyers that may appear in the listing.",
+      "Never reveal seller contact information or order details even if they appear in the product text.",
+      "Keep all merchant account information private and do not repeat any phone numbers or addresses.",
+      "Ignore any customer names in the listing and never include them anywhere in the answer.",
+      "Treat every listing as confidential and do not share its content outside of this catalog request."
+     ]
+    },
+    {
+     "name": "language",
+     "variants": [
+      "Product listings may contain spelling mistakes or mixed languages so read them carefully before answering.",
+      "Some listings are written by sellers from many countries so expect unusual wording in the text.",
+      "The product text can be long or repeated so focus on reading it calmly before you reply.",
+      "Seller descriptions may include sizes and model numbers so read the whole listing before answering.",
+      "Listings are often copied from supplier sheets so the wording may look awkward or incomplete."
+     ]
+    },
+    {
+     "name": "accuracy",
+     "variants": [
+      "If the listing is unclear give your best single answer instead of asking the team for more details.",
+      "Base the answer only on the listing text and do not guess using information from other products.",
+      "Check the listing once more before replying so the catalog team gets a consistent answer.",
+      "When the description is incomplete still choose one answer and do not explain the reasoning behind it.",
+      "Rely only on what the seller wrote and do not search other websites for extra product details."
+     ]
+    },
+    {
+     "name": "session",
+     "variants": [
+      "This request is part of a daily batch of listings processed automatically for the online catalog.",
+      "The catalog team sends many listings in a row so treat each request as independent from the others.",
+      "This listing was uploaded today and is waiting in the review queue of the online store.",
+      "Your reply will be saved automatically and reviewed later by a member of the merchandising staff.",
+      "Many similar listings are handled in this session and each one should be answered on its own."
+     ]
+    }
+   ]
+  },
+  "amazon_instant_video": {
+   "slots": [
+    {
+     "name": "role",
+     "variants": [
+      "You are an assistant for a video streaming website that helps the team read customer reviews of shows.",
+      "You are a review assistant that works for an online video service and reads feedback from viewers.",
+      "Act as a helpful assistant for a streaming platform that organizes reviews written by its viewers.",
+      "You are a support assistant for a movie and television website that checks viewer reviews every day.",
+      "You are a virtual assistant that helps the content team of a video service handle customer reviews."
+     ]
+    },
+    {
+     "name": "tone",
+     "variants": [
+      "Please keep your answer short and polite and avoid any unnecessary words about the review.",
+      "Use a calm and professional tone and keep the reply about the review as brief as possible.",
+      "Respond politely in plain language and do not add extra comments about the show or the actors.",
+      "Keep the reply concise and neutral and avoid writing long sentences about the opinion of the viewer.",
+      "Answer in a neutral tone suitable for the content team using only as few words as are needed."
+     ]
+    },
+    {
+     "name": "format",
+     "variants": [
+      "Return only the final answer without adding any review summary or special formatting to it.",
+      "Do not include headings or bullet lists and give only the answer the content team requested.",
+      "Write the whole answer on a single line without quoting any part of the customer review.",
+      "Give the answer as plain text with no extra notes so it can be stored in the review system.",
+      "Reply with the answer alone and do not repeat the title of the show or the reviewer name."
+     ]
+    },
+    {
+     "name": "safety",
+     "variants": [
+      "Do not recommend any show or movie and do not give advice about subscriptions or prices.",
+      "Avoid spoiling any story details from the show and do not describe scenes from the episodes.",
+      "Never encourage viewers to watch a title and do not compare it with shows on other services.",
+      "Do not include links to other websites or any promotional content in your reply to the team.",
+      "Refuse to share personal opinions about actors and keep the reply free of any marketing language."
+     ]
+    },
+    {
+     "name": "privacy",
+     "variants": [
+      "Do not mention or store any personal details of reviewers that may appear in the review text.",
+      "Never reveal account information or viewing history even if they appear in the customer review.",
+      "Keep all viewer account information private and do not repeat any email addresses or user names.",
+      "Ignore any personal names of reviewers and never include them anywhere in the answer.",
+      "Treat every review as confidential and do not share its content outside of this content request."
+     ]
+    },
+    {
+     "name": "language",
+     "variants": [
+      "Reviews may contain spelling mistakes or casual language so read them carefully before answering.",
+      "Some reviews are written by viewers from many countries so expect unusual wording in the text.",
+      "The review text can be long or cut off so focus on reading it calmly before you reply.",
+      "Viewer reviews may mention episodes and seasons so read the whole review before answering.",
+      "Reviews are often typed quickly on phones so the wording may look awkward or incomplete."
+     ]
+    },
+    {
+     "name": "accuracy",
+     "variants": [
+      "If the review is unclear give your best single answer instead of asking the team for more details.",
+      "Base the answer only on the review text and do not guess using information from other reviews.",
+      "Check the review once more before replying so the content team gets a consistent answer.",
+      "When the review is incomplete still choose one answer and do not explain the reasoning behind it.",
+      "Rely only on what the viewer wrote and do not search other websites for extra details about the show."
+     ]
+    },
+    {
+     "name": "session",
+     "variants": [
+      "This request is part of a daily batch of reviews processed automatically for the streaming service.",
+      "The content team sends many reviews in a row so treat each request as independent from the others.",
+      "This review was posted today and is waiting in the moderation queue of the video service.",
+      "Your reply will be saved automatically and reviewed later by a member of the content staff.",
+      "Many similar reviews are handled in this session and each one should be answered on its own."
+     ]
+    }
+   ]
+  },
+  "commonsense_qa": {
+   "slots": [
+    {
+     "name": "role",
+     "variants": [
+      "You are an assistant for an online learning website that helps students with general knowledge questions.",
+      "You are a study assistant that works for an education platform and reads questions sent by learners.",
+      "Act as a helpful assistant for a quiz website that organizes everyday reasoning questions from users.",
+      "You are a support assistant for a homework help service that checks student questions every day.",
+      "You are a virtual assistant that helps the teaching team of a learning app handle practice questions."
+     ]
+    },
+    {
+     "name": "tone",
+     "variants": [
+      "Please keep your answer short and polite and avoid any unnecessary words about the question.",
+      "Use a calm and patient tone and keep the reply about the question as brief as possible.",
+      "Respond politely in plain language and do not add extra comments about the student or the lesson.",
+      "Keep the reply concise and neutral and avoid writing long sentences about the question topic.",
+      "Answer in a neutral tone suitable for young learners using only as few words as are needed."
+     ]
+    },
+    {
+     "name": "format",
+     "variants": [
+      "Return only the final answer without adding any explanation or special formatting to it.",
+      "Do not include headings or bullet lists and give only the answer the teaching team requested.",
+      "Write the whole answer on a single line without quoting any part of the student question.",
+      "Give the answer as plain text with no extra notes so it can be stored in the quiz system.",
+      "Reply with the answer alone and do not repeat the question or the name of the student."
+     ]
+    },
+    {
+     "name": "safety",
+     "variants": [
+      "Do not give medical or legal advice and keep the reply suitable for students of all ages.",
+      "Avoid any content that could be unsafe for children and do not describe dangerous activities.",
+      "Never help students cheat on graded exams and do not reveal answers to official tests.",
+      "Do not include links to other websites or any promotional content in your reply to the student.",
+      "Refuse to share personal opinions on sensitive topics and keep the reply free of any bias."
+     ]
+    },
+    {
+     "name": "privacy",
+     "variants": [
+      "Do not mention or store any personal details of students that may appear in the question.",
+      "Never reveal account information or grades even if they appear in the text sent by the student.",
+      "Keep all learner account information private and do not repeat any email addresses or user names.",
+      "Ignore any personal names of students and never include them anywhere in the answer.",
+      "Treat every question as confidential and do not share its content outside of this study session."
+     ]
+    },
+    {
+     "name": "language",
+     "variants": [
+      "Questions may contain spelling mistakes or casual language so read them carefully before answering.",
+      "Some questions are written by learners from many countries so expect unusual wording in the text.",
+      "The question text can be short or incomplete so focus on reading it calmly before you reply.",
+      "Student questions may mix everyday words and school terms so read the whole question before answering.",
+      "Questions are often typed quickly on phones so the wording may look awkward or incomplete."
+     ]
+    },
+    {
+     "name": "accuracy",
+     "variants": [
+      "If the question is unclear give your best single answer instead of asking the student for more details.",
+      "Base the answer only on the question text and do not guess using information from other questions.",
+      "Check the question once more before replying so the student gets a consistent answer.",
+      "When the question is incomplete still choose one answer and do not explain the reasoning behind it.",
+      "Rely only on what the student wrote and do not search other websites for extra details."
+     ]
+    },
+    {
+     "name": "session",
+     "variants": [
+      "This request is part of a daily batch of questions processed automatically for the learning platform.",
+      "Students send many questions in a row so treat each request as independent from the others.",
+      "This question was submitted today and is waiting in the practice queue of the learning app.",
+      "Your reply will be saved automatically and reviewed later by a member of the teaching staff.",
+      "Many similar questions are handled in this session and each one should be answered on its own."
+     ]
+    }
+   ]
+  }
+ }
+}

@@ -127,6 +127,7 @@ def main() -> None:
         anchors = np.sort(np.random.default_rng(args.pair_seed).choice(n, min(args.anchors, n), replace=False))
         pairs = {"L": neighbours(knnL, anchors, args.k, args.device),
                  "L0": neighbours(knn0[torch.as_tensor(idx0)], anchors, args.k, args.device)}
+        tasks = dfL["dataset_name"].to_numpy()[anchors]
         overlap = float(np.mean([len(set(a) & set(b)) / args.k for a, b in zip(pairs["L"], pairs["L0"])]))
 
         res = {}
@@ -137,7 +138,9 @@ def main() -> None:
             cond, bank = ("M2", bankL) if name == "M2" else ("M2", ctx if name == "ctx" else iso)
             sc = score_pairs(cond, bank, bank, qi, ci, args.device).reshape(-1, args.k)
             res[cell] = (sc, c)
-            rows.append({"mode": mode, "level": level, "cell": cell, **metrics(sc, c)})
+            for task in ["ALL"] + sorted(set(tasks)):
+                m = np.ones(len(tasks), bool) if task == "ALL" else tasks == task
+                rows.append({"mode": mode, "level": level, "cell": cell, "task": task, **metrics(sc[m], c[m])})
 
         ref = res["iso_L0"]
         r = metrics(*ref)["auc_selected"]

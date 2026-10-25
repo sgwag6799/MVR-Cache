@@ -7,6 +7,9 @@ slots of prefix_pool.json to each prompt. Labels and every other column stay as 
                 so the prefix differs a little between requests
   fixed mode:   the same sentences for every prompt (reference, measured at L4 only)
 
+--pool may also be a per-task pool ({"tasks": {dataset_name: {"slots": [...]}}}, e.g.
+prefix_pool_task.json): each row then takes its sentences from the pool of its own sub-task.
+
 Output: <out>/<mode>/L<L>/<split>.parquet with extra columns
   orig_prompt, prefix_text, prefix_chars, prefix_choice, level, n_tokens, truncated,
   fits_all_levels (row is <= 512 tokens at the largest level, so no level truncates it)
@@ -31,6 +34,15 @@ import pandas as pd
 from benchmarks.prefix._shared import POOL_PATH, encode, load_tokenizer, ps
 
 
+def load_pools(path: str) -> dict:
+    """{dataset_name: slots} for a per-task pool, or {None: slots} for one shared pool."""
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    if "tasks" in raw:
+        return {t: [slot["variants"] for slot in v["slots"]] for t, v in raw["tasks"].items()}
+    return {None: ps.load_pool(path)}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--train", required=True)
@@ -46,7 +58,7 @@ def main() -> None:
     p.add_argument("--tokenizer", default="BAAI/bge-base-en-v1.5")
     args = p.parse_args()
 
-    pool = ps.load_pool(args.pool)
+    pools = load_pools(args.pool)
     tok = load_tokenizer(args.tokenizer)
     max_level = max(args.levels)
     splits = {"train": args.train, "val": args.val, "test": args.test}
@@ -57,15 +69,19 @@ def main() -> None:
         for name, path in splits.items():
             df = pd.read_parquet(path).reset_index(drop=True)
             keys = (df["dataset_name"].astype(str) + ":" + df["id"].astype(str)).tolist()
-            choices = [ps.prefix_choice(k, len(pool), len(pool[0]), args.seed, mode) for k in keys]
+            tasks = df["dataset_name"].astype(str).tolist()
+            pool_of = [pools.get(t, pools.get(None)) for t in tasks]
+            missing = sorted({t for t, pl in zip(tasks, pool_of) if pl is None})
+            assert not missing, f"no prefix pool for tasks {missing}"
+            choices = [ps.prefix_choice(k, len(pl), len(pl[0]), args.seed, mode) for k, pl in zip(keys, pool_of)]
             # 모든 단계에서 같은 행 집합을 쓰기 위해, 가장 긴 단계 기준으로 512토큰 이하인지 표시
             fits = []
-            for prompt, ch in zip(df["prompt"].astype(str), choices):
+            for prompt, ch, pool in zip(df["prompt"].astype(str), choices, pool_of):
                 text, _ = ps.join_prompt(ps.build_prefix(pool, ch, max_level), prompt)
                 fits.append(encode(tok, text)[3] <= ps.MAX_LEN)
             for L in levels:
                 rows = []
-                for prompt, ch in zip(df["prompt"].astype(str), choices):
+                for prompt, ch, pool in zip(df["prompt"].astype(str), choices, pool_of):
                     prefix = ps.build_prefix(pool, ch, L)
                     text, n_chars = ps.join_prompt(prefix, prompt)
                     full = encode(tok, text)[3]
