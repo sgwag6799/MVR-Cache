@@ -125,18 +125,37 @@ def neighbours(knn, query_idx, k, device, chunk=2048):
 # ----------------------------------------------------------------------------- 점수
 
 
+# 한 단계 안에서 같은 bank를 수백 번 패딩하지 않도록 bank 전체를 한 번만 GPU에 패딩해 둔다.
+# 단계가 바뀔 때 clear_pad_cache()로 비운다 (id 재사용 방지).
+_PAD_CACHE: dict = {}
+
+
+def clear_pad_cache():
+    _PAD_CACHE.clear()
+
+
+def _padded_bank(seg_list, flag_list, device):
+    key = (id(seg_list), device)
+    if key not in _PAD_CACHE:
+        n, s_max, h = len(seg_list), max(r.shape[0] for r in seg_list), seg_list[0].shape[1]
+        x = torch.zeros(n, s_max, h, dtype=seg_list[0].dtype)
+        m = torch.zeros(n, s_max, dtype=torch.bool)
+        pf = torch.zeros(n, s_max, dtype=torch.bool)
+        lens = torch.zeros(n, dtype=torch.long)
+        for i, r in enumerate(seg_list):
+            x[i, : r.shape[0]] = r
+            m[i, : r.shape[0]] = True
+            pf[i, : r.shape[0]] = flag_list[i]
+            lens[i] = r.shape[0]
+        _PAD_CACHE[key] = (x.to(device), m.to(device), pf.to(device), lens.to(device))
+    return _PAD_CACHE[key]
+
+
 def pad(seg_list, flag_list, idx, device):
-    rows = [seg_list[i].float() for i in idx]
-    s_max = max(r.shape[0] for r in rows)
-    h = rows[0].shape[1]
-    x = torch.zeros(len(rows), s_max, h)
-    m = torch.zeros(len(rows), s_max, dtype=torch.bool)
-    pf = torch.zeros(len(rows), s_max, dtype=torch.bool)
-    for j, r in enumerate(rows):
-        x[j, : r.shape[0]] = r
-        m[j, : r.shape[0]] = True
-        pf[j, : r.shape[0]] = flag_list[idx[j]]
-    return x.to(device), m.to(device), pf.to(device)
+    x, m, pf, lens = _padded_bank(seg_list, flag_list, device)
+    j = torch.as_tensor(np.asarray(idx), device=device)
+    s = int(lens[j].max())  # 배치 안 최대 조각 수까지만 (예전 배치별 패딩과 같은 모양)
+    return x[j, :s].float(), m[j, :s], pf[j, :s]
 
 
 class SegmentHead(nn.Module):
@@ -154,10 +173,14 @@ class SegmentHead(nn.Module):
 
 
 def pad_weights(w_list, idx, s_max, device):
-    w = torch.zeros(len(idx), s_max)
-    for j, i in enumerate(idx):
-        w[j, : w_list[i].shape[0]] = w_list[i]
-    return w.to(device)
+    key = (id(w_list), device)
+    if key not in _PAD_CACHE:
+        w = torch.zeros(len(w_list), max(r.shape[0] for r in w_list))
+        for i, r in enumerate(w_list):
+            w[i, : r.shape[0]] = r
+        _PAD_CACHE[key] = w.to(device)
+    j = torch.as_tensor(np.asarray(idx), device=device)
+    return _PAD_CACHE[key][j, :s_max]
 
 
 def weights(cond, x, m, pf, head, fw=None):
@@ -330,6 +353,7 @@ def main() -> None:
     runs = [("variant", L) for L in args.levels] + [("fixed", L) for L in args.fixed_levels]
     rows_out, gate_auc, train_logs = [], {}, {}
     for mode, level in runs:
+        clear_pad_cache()
         t0 = time.time()
         dfs = {s: load(mode, level, s) for s in ("train", "val", "test")}
         banks, knns, labels, ids = {}, {}, {}, {}
