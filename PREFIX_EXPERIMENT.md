@@ -275,3 +275,19 @@ python -m benchmarks.prefix.prefix_sanity --data $OUT/data
 python -m benchmarks.prefix.prefix_offline --data $OUT/data --out $OUT/explore_sel \
   --epochs 400 --select-metric auc_selected --patience 30 --extra-conditions M5 M6 --save-scores
 ```
+
+### 9.5 에폭 선택을 `auc_selected` + 조기 종료로 바꾼 실행 (커밋 `741860a`)
+
+`--epochs 400 --select-metric auc_selected --patience 30 --extra-conditions M5 M6 --save-scores`. 출력: [`stage1_explore_sel/`](mvr-cache/benchmarks/prefix/stage1_explore_sel/).
+
+| 단계 | M2 | M3 20ep (8절) | M3 200ep (9.1) | **M3 auc_selected·patience 30** | 돈 에폭 / 고른 에폭 | M4 |
+|---|---|---|---|---|---|---|
+| L0 | 0.6972 | 0.7001 | 0.7149 | 0.6997 | 55 / 24 | 0.6972 |
+| L2 | 0.6390 | 0.6545 | 0.6527 | 0.6505 | 33 / 2 | 0.6467 |
+| L4 | 0.6537 | 0.6636 | 0.6632 | 0.6646 | 58 / 27 | 0.6616 |
+| L8 | 0.6241 | 0.6501 | 0.6558 | 0.6511 | 113 / 82 | 0.6413 |
+| 고정 L4 | 0.6374 | 0.6485 | 0.6498 | 0.6457 | 86 / 55 | 0.6439 |
+
+- 판정: L4 회복률 0.25, L8 0.37 → 미달 (세 가지 에폭 설정 모두 0.22~0.43).
+- **val의 `auc_selected`도 L2 이상에서 0.47~0.50 (0.5 근처)**: val 935행에서는 M3 1등 후보 점수가 정답 여부를 거의 구분하지 못한다. test(앵커 6,000)에서는 0.65 수준이라 val이 작고 잡음이 커서 에폭 선택 신호로 약하다.
+- 결론: 에폭 수·선택 기준을 바꿔도 M3는 0.650~0.665 범위. **"과소학습 때문에 미달"이라는 설명은 지지되지 않는다.** Linear(768→1) 조각 가중치로 얻을 수 있는 회복은 대략 이 정도이고, 남는 차이는 문맥 오염(공통 문단이 원본 조각 벡터 자체를 바꿈)일 가능성이 크다 → 다음 확인: 원본 부분만 따로 인코딩한 조각 벡터로 M4 계산.
