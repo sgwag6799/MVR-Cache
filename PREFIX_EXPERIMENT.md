@@ -259,3 +259,19 @@ python -m benchmarks.prefix.prefix_sanity --data $OUT/data
 2. **M3는 에폭을 늘리면 L0·L8에서 오른다** (L0 0.700 → 0.715, L8 0.650 → 0.656). 그러나 **L0에서도 +0.018**이 나므로, L8의 +0.032 중 공통 문단 때문에 생긴 몫은 약 +0.014뿐이다. 학습 가중치의 이득 대부분은 공통 문단과 무관한 "원본 조각 재가중"이다.
 3. **M3는 200 에폭에서도 수렴하지 않았다.** 선택 에폭이 L0 194, 나머지 모두 199(마지막), train BCE가 계속 감소. 선택 기준인 val AUC(val 안 모든 쌍)는 L2 이상에서 0.45~0.48로 0.5 미만이고 에폭 19 → 199 동안 거의 안 변한다(예: L8 0.4757 → 0.4779) → **선택 기준이 사실상 "마지막 에폭"으로 작동**한다. val 지표(쌍 전체 AUC)와 판정 지표(`auc_selected`)가 다른 것도 문제. 다음에 고칠 것: val 선택 지표를 `auc_selected`로 맞추기, 에폭 대신 수렴(조기 종료) 기준.
 4. 1등 정답률(`top1_acc`)은 조건 간 차이가 작다 (L8: M2 0.744, M3 0.748, M4 0.757). AUC 이득이 "1등 후보 선택"보다 "1등 후보의 점수 보정"에서 주로 나온다는 뜻이며, 2단계 히트율로 이어질지는 1단계만으로 알 수 없다.
+
+### 9.4 M3 에폭 선택 옵션 (9.3-3 대응, 커밋 이후 추가)
+
+| 옵션 | 기본값 | 뜻 |
+|---|---|---|
+| `--select-metric {auc_pairs, auc_selected}` | `auc_pairs` (원래 규칙) | val에서 에폭을 고르는 지표. `auc_selected`는 판정 지표와 같은 "행마다 1등 후보의 (s, c) AUC" |
+| `--patience N` | `0` (끔) | N 에폭 동안 val 최고값이 안 바뀌면 학습 중단 |
+
+- 옵션을 안 주면 8절과 결과가 완전히 같다 (빠른 실행으로 차이 0.0 확인).
+- meta의 `m3_training`에 `select_metric`, `epochs_run`, 에폭별 `val_auc_pairs`·`val_auc_selected`가 함께 남는다.
+- val은 935행이라 `auc_selected` 한 값의 잡음이 크다 (표준오차 약 0.02). patience를 너무 작게 잡으면 첫 몇 에폭에서 멈출 수 있으니 20 이상 권장.
+
+```bash
+python -m benchmarks.prefix.prefix_offline --data $OUT/data --out $OUT/explore_sel \
+  --epochs 400 --select-metric auc_selected --patience 30 --extra-conditions M5 M6 --save-scores
+```

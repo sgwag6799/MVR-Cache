@@ -257,7 +257,11 @@ def metrics(scores, c):
 # ----------------------------------------------------------------------------- M3 학습
 
 
-def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, seed, dim):
+def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, seed, dim,
+               k=10, select_metric="auc_pairs", patience=0):
+    """select_metric: val metric for picking the epoch ('auc_pairs' = all val pairs, the
+    original rule; 'auc_selected' = each val row's #1 candidate, same as the gate metric).
+    patience: stop after this many epochs without a new best (0 = run all epochs)."""
     torch.manual_seed(seed)
     head = SegmentHead(dim).to(device)
     calib = nn.Parameter(torch.tensor([10.0, -5.0], device=device))  # 점수 → 로짓 (a·s + b)
@@ -284,13 +288,18 @@ def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, 
         head.eval()
         with torch.no_grad():
             vs = score_pairs("M3", bank_va, bank_va, pairs_va[0], pairs_va[1], device, head=head)
-        va = auc(vs, pairs_va[2])
-        log.append({"epoch": ep, "train_bce": tot / len(y), "val_auc": va})
+        vm = metrics(vs.reshape(-1, k), pairs_va[2].reshape(-1, k).astype(int))  # within_pairs는 행마다 k개씩
+        va = vm[select_metric]
+        log.append({"epoch": ep, "train_bce": tot / len(y), "val_auc": va,
+                    "val_auc_pairs": vm["auc_pairs"], "val_auc_selected": vm["auc_selected"]})
         if va > best["val_auc"]:
-            best = {"epoch": ep, "val_auc": va, "state": {k: v.detach().clone() for k, v in head.state_dict().items()}}
+            best = {"epoch": ep, "val_auc": va, "state": {n: v.detach().clone() for n, v in head.state_dict().items()}}
+        elif patience and ep - best["epoch"] >= patience:
+            break  # 조기 종료
     head.load_state_dict(best["state"])
     head.eval()
-    return head, {"selected_epoch": best["epoch"], "selected_val_auc": best["val_auc"], "epochs": log}
+    return head, {"selected_epoch": best["epoch"], "selected_val_auc": best["val_auc"],
+                  "select_metric": select_metric, "epochs_run": len(log), "epochs": log}
 
 
 def within_pairs(knn, rows, labels, k, device):
@@ -330,6 +339,10 @@ def main() -> None:
     p.add_argument("--gate-recovery", type=float, default=0.5)
     p.add_argument("--extra-conditions", nargs="*", default=[], choices=EXTRA_CONDITIONS,
                    help="Exploratory label-free weightings to add (M5 idf, M6 centroid).")
+    p.add_argument("--select-metric", default="auc_pairs", choices=["auc_pairs", "auc_selected"],
+                   help="M3 epoch selection on val: all pairs (original rule) or each row's #1 candidate.")
+    p.add_argument("--patience", type=int, default=0,
+                   help="M3 early stopping: epochs without a new best val score (0 = off).")
     p.add_argument("--save-scores", action="store_true",
                    help="Save per-pair scores and labels (scores_<mode>_L<L>.npz) for bootstrap CIs.")
     args = p.parse_args()
@@ -383,7 +396,8 @@ def main() -> None:
         tr_pairs = within_pairs(knns["train"], np.arange(len(dfs["train"])), labels["train"], args.k, args.device)
         va_pairs = within_pairs(knns["val"], np.arange(len(dfs["val"])), labels["val"], args.k, args.device)
         head, tlog = train_head(banks["train"], tr_pairs, banks["val"], va_pairs, args.device,
-                                args.epochs, args.lr, args.batch, args.seed, dim)
+                                args.epochs, args.lr, args.batch, args.seed, dim,
+                                k=args.k, select_metric=args.select_metric, patience=args.patience)
         train_logs[f"{mode}/L{level}"] = {k: v for k, v in tlog.items() if k != "epochs"} | {"epochs": tlog["epochs"]}
         torch.save({"state": head.state_dict(), "dim": dim, "mode": mode, "level": level,
                     "max_cuts": args.max_cuts, "cap_scope": args.cap_scope, "model": args.model,
