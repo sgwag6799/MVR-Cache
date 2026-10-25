@@ -1,0 +1,87 @@
+{
+ "pool": "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_pool.json",
+ "seed": 42,
+ "levels": [
+  0,
+  2,
+  4,
+  8
+ ],
+ "files": {
+  "variant/L0/train": {
+   "rows": 3000,
+   "truncated": 95,
+   "fits_all_levels": 2791
+  },
+  "variant/L2/train": {
+   "rows": 3000,
+   "truncated": 112,
+   "fits_all_levels": 2791
+  },
+  "variant/L4/train": {
+   "rows": 3000,
+   "truncated": 135,
+   "fits_all_levels": 2791
+  },
+  "variant/L8/train": {
+   "rows": 3000,
+   "truncated": 209,
+   "fits_all_levels": 2791
+  },
+  "variant/L0/val": {
+   "rows": 1000,
+   "truncated": 38,
+   "fits_all_levels": 935
+  },
+  "variant/L2/val": {
+   "rows": 1000,
+   "truncated": 39,
+   "fits_all_levels": 935
+  },
+  "variant/L4/val": {
+   "rows": 1000,
+   "truncated": 47,
+   "fits_all_levels": 935
+  },
+  "variant/L8/val": {
+   "rows": 1000,
+   "truncated": 65,
+   "fits_all_levels": 935
+  },
+  "variant/L0/test": {
+   "rows": 41000,
+   "truncated": 1432,
+   "fits_all_levels": 38304
+  },
+  "variant/L2/test": {
+   "rows": 41000,
+   "truncated": 1630,
+   "fits_all_levels": 38304
+  },
+  "variant/L4/test": {
+   "rows": 41000,
+   "truncated": 1904,
+   "fits_all_levels": 38304
+  },
+  "variant/L8/test": {
+   "rows": 41000,
+   "truncated": 2696,
+   "fits_all_levels": 38304
+  },
+  "fixed/L4/train": {
+   "rows": 3000,
+   "truncated": 136,
+   "fits_all_levels": 2795
+  },
+  "fixed/L4/val": {
+   "rows": 1000,
+   "truncated": 47,
+   "fits_all_levels": 935
+  },
+  "fixed/L4/test": {
+   "rows": 41000,
+   "truncated": 1908,
+   "fits_all_levels": 38350
+  }
+ }
+}

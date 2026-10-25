@@ -1,0 +1,116 @@
+{
+ "args": {
+  "data": "/root/MVR-Cache/data/prefix/data",
+  "out": "/root/MVR-Cache/data/prefix/offline_quick",
+  "levels": [
+   0,
+   2,
+   4,
+   8
+  ],
+  "fixed_levels": [
+   4
+  ],
+  "model": "BAAI/bge-base-en-v1.5",
+  "device": "cuda",
+  "no_fp16": false,
+  "anchors": 6000,
+  "k": 10,
+  "pair_seed": 0,
+  "max_cuts": 32,
+  "cap_scope": "original",
+  "row_filter": "fits_all_levels",
+  "resp_col": "response_llama_3_8b",
+  "epochs": 2,
+  "lr": 0.001,
+  "batch": 2048,
+  "seed": 0,
+  "quick": 300,
+  "gate_drop": 0.03,
+  "gate_recovery": 0.5
+ },
+ "git_commit": "acec6bf8c0f586b1156cb5941cd57b532c27a227",
+ "gpu": "Tesla T4",
+ "m3_training": {
+  "variant/L0": {
+   "selected_epoch": 1,
+   "selected_val_auc": 0.5730679462759979,
+   "epochs": [
+    {
+     "epoch": 0,
+     "train_bce": 1.2096121883392335,
+     "val_auc": 0.5726917553448161
+    },
+    {
+     "epoch": 1,
+     "train_bce": 1.20743102200826,
+     "val_auc": 0.5730679462759979
+    }
+   ]
+  },
+  "variant/L2": {
+   "selected_epoch": 1,
+   "selected_val_auc": 0.464254916268159,
+   "epochs": [
+    {
+     "epoch": 0,
+     "train_bce": 1.3975220384597777,
+     "val_auc": 0.46407957134195926
+    },
+    {
+     "epoch": 1,
+     "train_bce": 1.3953208920160929,
+     "val_auc": 0.464254916268159
+    }
+   ]
+  },
+  "variant/L4": {
+   "selected_epoch": 1,
+   "selected_val_auc": 0.47392081736909325,
+   "epochs": [
+    {
+     "epoch": 0,
+     "train_bce": 1.445269458770752,
+     "val_auc": 0.47356755154168945
+    },
+    {
+     "epoch": 1,
+     "train_bce": 1.4429064461390178,
+     "val_auc": 0.47392081736909325
+    }
+   ]
+  },
+  "variant/L8": {
+   "selected_epoch": 1,
+   "selected_val_auc": 0.5117060327091568,
+   "epochs": [
+    {
+     "epoch": 0,
+     "train_bce": 1.9333520056406657,
+     "val_auc": 0.5115662518872633
+    },
+    {
+     "epoch": 1,
+     "train_bce": 1.9306572093963623,
+     "val_auc": 0.5117060327091568
+    }
+   ]
+  },
+  "fixed/L4": {
+   "selected_epoch": 1,
+   "selected_val_auc": 0.4418355007424878,
+   "epochs": [
+    {
+     "epoch": 0,
+     "train_bce": 1.394633067448934,
+     "val_auc": 0.44157503858024694
+    },
+    {
+     "epoch": 1,
+     "train_bce": 1.392373978614807,
+     "val_auc": 0.4418355007424878
+    }
+   ]
+  }
+ }
+}
