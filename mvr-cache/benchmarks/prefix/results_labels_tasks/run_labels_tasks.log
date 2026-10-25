@@ -30,3 +30,35 @@ fixed L4 test: {"rows": 41000, "tokens": {"mean": 202.9, "p50": 140, "p90": 377,
 fixed L4 train: {"rows": 3000, "tokens": {"mean": 201.7, "p50": 140, "p90": 381, "max": 2187}, "truncated": 141, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2777, "segments": {"mean": 14.78, "p90": 34, "max": 37}, "rows_hitting_cap": 235, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 141, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 319}
 fixed L4 val: {"rows": 1000, "tokens": {"mean": 205.7, "p50": 134, "p90": 370, "max": 3444}, "truncated": 48, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 14.13, "p90": 31, "max": 37}, "rows_hitting_cap": 64, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 48, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 88}
 -> /root/MVR-Cache/data/prefix_task/data/prefix_sanity.json
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 4599.88it/s]
+[variant L0] 140s  M1 auc_sel=0.7010  M2 auc_sel=0.7011  M3 auc_sel=0.7004  M4 auc_sel=0.7011  M5 auc_sel=0.6992  M6 auc_sel=0.7010
+[variant L2] 191s  M1 auc_sel=0.6091  M2 auc_sel=0.6093  M3 auc_sel=0.6312  M4 auc_sel=0.6186  M5 auc_sel=0.6110  M6 auc_sel=0.6094
+[variant L4] 233s  M1 auc_sel=0.6049  M2 auc_sel=0.6089  M3 auc_sel=0.6353  M4 auc_sel=0.6249  M5 auc_sel=0.6114  M6 auc_sel=0.6106
+[variant L8] 320s  M1 auc_sel=0.5834  M2 auc_sel=0.5812  M3 auc_sel=0.6195  M4 auc_sel=0.6092  M5 auc_sel=0.5909  M6 auc_sel=0.5827
+[fixed L4] 231s  M1 auc_sel=0.6530  M2 auc_sel=0.6524  M3 auc_sel=0.6623  M4 auc_sel=0.6547  M5 auc_sel=0.6524  M6 auc_sel=0.6504
+{
+ "metric": "auc_selected",
+ "drop_min": 0.03,
+ "recovery_min": 0.5,
+ "levels": {
+  "L4": {
+   "R": 0.70111398437527,
+   "M2": 0.6088504982060772,
+   "M3": 0.6353423050590241,
+   "M4": 0.6248694650653029,
+   "drop": 0.09226348616919278,
+   "recovery": 0.28713208174646976,
+   "pass": false
+  },
+  "L8": {
+   "R": 0.70111398437527,
+   "M2": 0.5811956559612095,
+   "M3": 0.6194906310753789,
+   "M4": 0.609203282990345,
+   "drop": 0.11991832841406047,
+   "recovery": 0.31934213577379517,
+   "pass": false
+  }
+ },
+ "stage2_level": null
+}
