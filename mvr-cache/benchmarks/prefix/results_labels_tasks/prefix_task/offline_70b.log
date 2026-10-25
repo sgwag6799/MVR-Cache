@@ -1,0 +1,32 @@
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 9481.51it/s]
+[variant L0] 150s  M1 auc_sel=0.7180  M2 auc_sel=0.7174  M3 auc_sel=0.7168  M4 auc_sel=0.7174  M5 auc_sel=0.7192  M6 auc_sel=0.7162
+[variant L2] 190s  M1 auc_sel=0.6044  M2 auc_sel=0.6084  M3 auc_sel=0.6364  M4 auc_sel=0.6253  M5 auc_sel=0.6134  M6 auc_sel=0.6086
+[variant L4] 235s  M1 auc_sel=0.6165  M2 auc_sel=0.6138  M3 auc_sel=0.6444  M4 auc_sel=0.6348  M5 auc_sel=0.6209  M6 auc_sel=0.6156
+[variant L8] 319s  M1 auc_sel=0.5895  M2 auc_sel=0.5828  M3 auc_sel=0.6286  M4 auc_sel=0.6182  M5 auc_sel=0.5927  M6 auc_sel=0.5859
+[fixed L4] 232s  M1 auc_sel=0.6608  M2 auc_sel=0.6579  M3 auc_sel=0.6731  M4 auc_sel=0.6659  M5 auc_sel=0.6613  M6 auc_sel=0.6590
+{
+ "metric": "auc_selected",
+ "drop_min": 0.03,
+ "recovery_min": 0.5,
+ "levels": {
+  "L4": {
+   "R": 0.717402226092602,
+   "M2": 0.613759698804486,
+   "M3": 0.6444063996805285,
+   "M4": 0.6348069974624889,
+   "drop": 0.10364252728811596,
+   "recovery": 0.29569619419688303,
+   "pass": false
+  },
+  "L8": {
+   "R": 0.717402226092602,
+   "M2": 0.5828055579133294,
+   "M3": 0.6285586503253621,
+   "M4": 0.6182300060740354,
+   "drop": 0.13459666817927252,
+   "recovery": 0.33992737733368694,
+   "pass": false
+  }
+ },
+ "stage2_level": null
+}
