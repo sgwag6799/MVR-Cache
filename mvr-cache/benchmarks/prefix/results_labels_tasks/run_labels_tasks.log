@@ -336,3 +336,35 @@ Traceback (most recent call last):
   File "/usr/local/lib/python3.13/dist-packages/pandas/io/common.py", line 882, in get_handle
     handle = open(handle, ioargs.mode)
 FileNotFoundError: [Errno 2] No such file or directory: '/root/MVR-Cache/data/prefix/data/variant/L0/train.parquet'
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5069.34it/s]
+[variant L0] 102s  M1 auc_sel=0.7293  M2 auc_sel=0.7293  M3 auc_sel=0.7319  M4 auc_sel=0.7293  M5 auc_sel=0.7308  M6 auc_sel=0.7281
+[variant L2] 125s  M1 auc_sel=0.6603  M2 auc_sel=0.6581  M3 auc_sel=0.6787  M4 auc_sel=0.6685  M5 auc_sel=0.6635  M6 auc_sel=0.6576
+[variant L4] 149s  M1 auc_sel=0.6610  M2 auc_sel=0.6606  M3 auc_sel=0.6829  M4 auc_sel=0.6702  M5 auc_sel=0.6615  M6 auc_sel=0.6610
+[variant L8] 197s  M1 auc_sel=0.6266  M2 auc_sel=0.6316  M3 auc_sel=0.6606  M4 auc_sel=0.6527  M5 auc_sel=0.6379  M6 auc_sel=0.6327
+[fixed L4] 149s  M1 auc_sel=0.6625  M2 auc_sel=0.6630  M3 auc_sel=0.6774  M4 auc_sel=0.6725  M5 auc_sel=0.6676  M6 auc_sel=0.6623
+{
+ "metric": "auc_selected",
+ "drop_min": 0.03,
+ "recovery_min": 0.5,
+ "levels": {
+  "L4": {
+   "R": 0.7292939724393184,
+   "M2": 0.6605664219503617,
+   "M3": 0.68293171233291,
+   "M4": 0.6701506380047518,
+   "drop": 0.06872755048895662,
+   "recovery": 0.3254195766243979,
+   "pass": false
+  },
+  "L8": {
+   "R": 0.7292939724393184,
+   "M2": 0.6315933078132303,
+   "M3": 0.6606097089523388,
+   "M4": 0.6527413381793308,
+   "drop": 0.09770066462608806,
+   "recovery": 0.2969928735915739,
+   "pass": false
+  }
+ },
+ "stage2_level": null
+}
