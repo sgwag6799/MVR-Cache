@@ -20,3 +20,57 @@ fixed L4 train: 3000 rows, truncated 141, fits all levels 2777
 fixed L4 val: 1000 rows, truncated 48, fits all levels 929
 fixed L4 test: 41000 rows, truncated 1960, fits all levels 38109
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+variant L0 val: {"rows": 1000, "tokens": {"mean": 135.6, "p50": 64, "p90": 299, "max": 3373}, "truncated": 38, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 10.16, "p90": 27, "max": 33}, "rows_hitting_cap": 69, "prefix_segments_ne_level": 0}
+variant L0 train: {"rows": 3000, "tokens": {"mean": 131.6, "p50": 70, "p90": 310, "max": 2117}, "truncated": 95, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2778, "segments": {"mean": 10.8, "p90": 30, "max": 33}, "rows_hitting_cap": 244, "prefix_segments_ne_level": 0}
+variant L0 test: {"rows": 41000, "tokens": {"mean": 132.8, "p50": 70, "p90": 306, "max": 9591}, "truncated": 1432, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 38096, "segments": {"mean": 10.56, "p90": 29, "max": 33}, "rows_hitting_cap": 3105, "prefix_segments_ne_level": 0}
+variant L2 val: {"rows": 1000, "tokens": {"mean": 171.4, "p50": 100, "p90": 335, "max": 3410}, "truncated": 40, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 12.15, "p90": 29, "max": 35}, "rows_hitting_cap": 65, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 40, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 76}
+variant L2 train: {"rows": 3000, "tokens": {"mean": 167.4, "p50": 106, "p90": 347, "max": 2155}, "truncated": 118, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2778, "segments": {"mean": 12.79, "p90": 32, "max": 35}, "rows_hitting_cap": 242, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 118, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 284}
+variant L2 test: {"rows": 41000, "tokens": {"mean": 168.5, "p50": 105, "p90": 342, "max": 9627}, "truncated": 1667, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 38096, "segments": {"mean": 12.55, "p90": 31, "max": 35}, "rows_hitting_cap": 3004, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 1667, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 3631}
+variant L4 val: {"rows": 1000, "tokens": {"mean": 207.0, "p50": 136, "p90": 371, "max": 3445}, "truncated": 48, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 14.13, "p90": 31, "max": 37}, "rows_hitting_cap": 64, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 48, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 88}
+variant L4 train: {"rows": 3000, "tokens": {"mean": 203.0, "p50": 141, "p90": 383, "max": 2191}, "truncated": 142, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2778, "segments": {"mean": 14.78, "p90": 34, "max": 37}, "rows_hitting_cap": 235, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 142, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 319}
+variant L4 test: {"rows": 41000, "tokens": {"mean": 204.1, "p50": 141, "p90": 377, "max": 9662}, "truncated": 1971, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 38096, "segments": {"mean": 14.53, "p90": 32, "max": 37}, "rows_hitting_cap": 2839, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 1971, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 4073}
+variant L8 val: {"rows": 1000, "tokens": {"mean": 276.8, "p50": 205, "p90": 443, "max": 3515}, "truncated": 71, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 18.05, "p90": 34, "max": 41}, "rows_hitting_cap": 53, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 71, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 113}
+variant L8 train: {"rows": 3000, "tokens": {"mean": 272.8, "p50": 211, "p90": 453, "max": 2262}, "truncated": 222, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2778, "segments": {"mean": 18.67, "p90": 37, "max": 41}, "rows_hitting_cap": 171, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 222, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 406}
+variant L8 test: {"rows": 41000, "tokens": {"mean": 273.9, "p50": 211, "p90": 448, "max": 9732}, "truncated": 2904, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 38096, "segments": {"mean": 18.42, "p90": 35, "max": 41}, "rows_hitting_cap": 2186, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 2904, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 5140}
+fixed L4 val: {"rows": 1000, "tokens": {"mean": 205.7, "p50": 134, "p90": 370, "max": 3444}, "truncated": 48, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 929, "segments": {"mean": 14.13, "p90": 31, "max": 37}, "rows_hitting_cap": 64, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 48, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 88}
+fixed L4 train: {"rows": 3000, "tokens": {"mean": 201.7, "p50": 140, "p90": 381, "max": 2187}, "truncated": 141, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 2777, "segments": {"mean": 14.78, "p90": 34, "max": 37}, "rows_hitting_cap": 235, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 141, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 319}
+fixed L4 test: {"rows": 41000, "tokens": {"mean": 202.9, "p50": 140, "p90": 377, "max": 9662}, "truncated": 1960, "truncated_among_fits_all_levels": 0, "rows_fit_all_levels": 38109, "segments": {"mean": 14.53, "p90": 32, "max": 37}, "rows_hitting_cap": 2844, "prefix_segments_ne_level": 0, "original_split_differs_from_L0": 1960, "original_split_differs_from_L0_among_fits": 0, "original_split_differs_if_cap_scope_all": 4073}
+-> /root/MVR-Cache/data/prefix_task/data/prefix_sanity.json
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5066.78it/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_contamination.py", line 168, in <module>
+    main()
+    ~~~~^^
+  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_contamination.py", line 88, in main
+    lm = AutoModel.from_pretrained(args.model).to(args.device).eval()
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/dist-packages/transformers/modeling_utils.py", line 3710, in to
+    return super().to(*args, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 1384, in to
+    return self._apply(convert)
+           ~~~~~~~~~~~^^^^^^^^^
+  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 934, in _apply
+    module._apply(fn)
+    ~~~~~~~~~~~~~^^^^
+  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 965, in _apply
+    param_applied = fn(param)
+  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 1370, in convert
+    return t.to(
+           ~~~~^
+        device,
+        ^^^^^^^
+        dtype if t.is_floating_point() or t.is_complex() else None,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        non_blocking,
+        ^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/dist-packages/torch/cuda/__init__.py", line 471, in _lazy_init
+    raise AssertionError("Torch not compiled with CUDA enabled")
+AssertionError: Torch not compiled with CUDA enabled
