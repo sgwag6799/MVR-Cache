@@ -1,0 +1,39 @@
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5154.74it/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_offline.py", line 452, in <module>
+    main()
+    ~~~~^^
+  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_offline.py", line 371, in main
+    dfs = {s: load(mode, level, s) for s in ("train", "val", "test")}
+              ~~~~^^^^^^^^^^^^^^^^
+  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_offline.py", line 359, in load
+    df = pd.read_parquet(os.path.join(args.data, mode, f"L{level}", f"{split}.parquet"))
+  File "/usr/local/lib/python3.13/dist-packages/pandas/io/parquet.py", line 667, in read_parquet
+    return impl.read(
+           ~~~~~~~~~^
+        path,
+        ^^^^^
+    ...<6 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/dist-packages/pandas/io/parquet.py", line 267, in read
+    path_or_handle, handles, filesystem = _get_path_or_handle(
+                                          ~~~~~~~~~~~~~~~~~~~^
+        path,
+        ^^^^^
+    ...<2 lines>...
+        mode="rb",
+        ^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/dist-packages/pandas/io/parquet.py", line 140, in _get_path_or_handle
+    handles = get_handle(
+        path_or_handle, mode, is_text=False, storage_options=storage_options
+    )
+  File "/usr/local/lib/python3.13/dist-packages/pandas/io/common.py", line 882, in get_handle
+    handle = open(handle, ioargs.mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/root/MVR-Cache/data/prefix/data/variant/L0/train.parquet'
