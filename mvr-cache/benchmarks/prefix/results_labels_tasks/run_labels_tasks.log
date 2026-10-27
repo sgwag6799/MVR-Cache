@@ -1,1 +1,22 @@
 nohup: ignoring input
+[restore] prefix/offline_quick
+[restore] prefix_task/offline_70b
+[restore] prefix_task/offline_8b
+[restore] prefix_task/contamination_8b
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+variant L0 train: 3000 rows, truncated 95, fits all levels 2778
+variant L2 train: 3000 rows, truncated 118, fits all levels 2778
+variant L4 train: 3000 rows, truncated 142, fits all levels 2778
+variant L8 train: 3000 rows, truncated 222, fits all levels 2778
+variant L0 val: 1000 rows, truncated 38, fits all levels 929
+variant L2 val: 1000 rows, truncated 40, fits all levels 929
+variant L4 val: 1000 rows, truncated 48, fits all levels 929
+variant L8 val: 1000 rows, truncated 71, fits all levels 929
+variant L0 test: 41000 rows, truncated 1432, fits all levels 38096
+variant L2 test: 41000 rows, truncated 1667, fits all levels 38096
+variant L4 test: 41000 rows, truncated 1971, fits all levels 38096
+variant L8 test: 41000 rows, truncated 2904, fits all levels 38096
+fixed L4 train: 3000 rows, truncated 141, fits all levels 2777
+fixed L4 val: 1000 rows, truncated 48, fits all levels 929
+fixed L4 test: 41000 rows, truncated 1960, fits all levels 38109
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
