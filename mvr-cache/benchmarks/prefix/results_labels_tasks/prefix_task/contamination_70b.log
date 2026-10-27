@@ -1,38 +1,183 @@
-Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5066.78it/s]
-Traceback (most recent call last):
-  File "<frozen runpy>", line 203, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_contamination.py", line 168, in <module>
-    main()
-    ~~~~^^
-  File "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_contamination.py", line 88, in main
-    lm = AutoModel.from_pretrained(args.model).to(args.device).eval()
-         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.13/dist-packages/transformers/modeling_utils.py", line 3710, in to
-    return super().to(*args, **kwargs)
-           ~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 1384, in to
-    return self._apply(convert)
-           ~~~~~~~~~~~^^^^^^^^^
-  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 934, in _apply
-    module._apply(fn)
-    ~~~~~~~~~~~~~^^^^
-  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 934, in _apply
-    module._apply(fn)
-    ~~~~~~~~~~~~~^^^^
-  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 965, in _apply
-    param_applied = fn(param)
-  File "/usr/local/lib/python3.13/dist-packages/torch/nn/modules/module.py", line 1370, in convert
-    return t.to(
-           ~~~~^
-        device,
-        ^^^^^^^
-        dtype if t.is_floating_point() or t.is_complex() else None,
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-        non_blocking,
-        ^^^^^^^^^^^^^
-    )
-    ^
-  File "/usr/local/lib/python3.13/dist-packages/torch/cuda/__init__.py", line 471, in _lazy_init
-    raise AssertionError("Torch not compiled with CUDA enabled")
-AssertionError: Torch not compiled with CUDA enabled
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 5072.05it/s]
+[variant L2] 119s  aligned=1.000 cos=0.9391 overlap=0.403  M2_L=0.6081  ctx_L=0.6265  iso_L=0.7600  ctx_L0=0.6399  iso_L0=0.7174
+[variant L4] 142s  aligned=1.000 cos=0.9208 overlap=0.351  M2_L=0.6143  ctx_L=0.6430  iso_L=0.7617  ctx_L0=0.6698  iso_L0=0.7174
+[variant L8] 190s  aligned=1.000 cos=0.8649 overlap=0.290  M2_L=0.5828  ctx_L=0.6236  iso_L=0.7619  ctx_L0=0.6559  iso_L0=0.7174
+[fixed L4] 144s  aligned=1.000 cos=0.9386 overlap=0.535  M2_L=0.6517  ctx_L=0.6557  iso_L=0.7248  ctx_L0=0.6481  iso_L0=0.7181
+{
+ "variant/L2": {
+  "n_rows": 38096,
+  "aligned_share": 1.0,
+  "mean_cos_ctx_vs_iso": 0.9391085965005804,
+  "neighbour_overlap_with_L0": 0.4025333333333333,
+  "R": 0.7173847469583186,
+  "M2_L": {
+   "auc_selected": 0.6080699203316738,
+   "minus_R": -0.10931482662664471,
+   "ci95": [
+    -0.1271496502993519,
+    -0.08949009415206106
+   ]
+  },
+  "ctx_L": {
+   "auc_selected": 0.6264501632443695,
+   "minus_R": -0.09093458371394902,
+   "ci95": [
+    -0.10819340122103631,
+    -0.07322378459762854
+   ]
+  },
+  "iso_L": {
+   "auc_selected": 0.7600263377086999,
+   "minus_R": 0.04264159075038132,
+   "ci95": [
+    0.028571929897341024,
+    0.05638544027715466
+   ]
+  },
+  "ctx_L0": {
+   "auc_selected": 0.6399062729071635,
+   "minus_R": -0.07747847405115504,
+   "ci95": [
+    -0.0947828759300856,
+    -0.06025415784877044
+   ]
+  },
+  "iso_L0": {
+   "auc_selected": 0.7173847469583186,
+   "minus_R": 0.0,
+   "ci95": null
+  }
+ },
+ "variant/L4": {
+  "n_rows": 38096,
+  "aligned_share": 1.0,
+  "mean_cos_ctx_vs_iso": 0.9207520279415337,
+  "neighbour_overlap_with_L0": 0.35081666666666667,
+  "R": 0.7173847469583186,
+  "M2_L": {
+   "auc_selected": 0.6143261597055061,
+   "minus_R": -0.10305858725281247,
+   "ci95": [
+    -0.12171059755496691,
+    -0.08443016463079647
+   ]
+  },
+  "ctx_L": {
+   "auc_selected": 0.6430166892747473,
+   "minus_R": -0.07436805768357124,
+   "ci95": [
+    -0.09130895364701248,
+    -0.056795989973143945
+   ]
+  },
+  "iso_L": {
+   "auc_selected": 0.7617351789624034,
+   "minus_R": 0.04435043200408484,
+   "ci95": [
+    0.029582880474885265,
+    0.05862182541628221
+   ]
+  },
+  "ctx_L0": {
+   "auc_selected": 0.6698325670029072,
+   "minus_R": -0.04755217995541139,
+   "ci95": [
+    -0.06434102722400756,
+    -0.030717411493102257
+   ]
+  },
+  "iso_L0": {
+   "auc_selected": 0.7173847469583186,
+   "minus_R": 0.0,
+   "ci95": null
+  }
+ },
+ "variant/L8": {
+  "n_rows": 38096,
+  "aligned_share": 1.0,
+  "mean_cos_ctx_vs_iso": 0.8648558202106154,
+  "neighbour_overlap_with_L0": 0.2900666666666667,
+  "R": 0.7173847469583186,
+  "M2_L": {
+   "auc_selected": 0.5828064750827578,
+   "minus_R": -0.1345782718755607,
+   "ci95": [
+    -0.15443511850756741,
+    -0.11465381517155804
+   ]
+  },
+  "ctx_L": {
+   "auc_selected": 0.6235789986462457,
+   "minus_R": -0.09380574831207289,
+   "ci95": [
+    -0.11253986889290284,
+    -0.07564409311301049
+   ]
+  },
+  "iso_L": {
+   "auc_selected": 0.7619144000191893,
+   "minus_R": 0.044529653060870755,
+   "ci95": [
+    0.028439555738549786,
+    0.06106558355336543
+   ]
+  },
+  "ctx_L0": {
+   "auc_selected": 0.655868452740711,
+   "minus_R": -0.061516294217607514,
+   "ci95": [
+    -0.07904805497781998,
+    -0.04322847842500495
+   ]
+  },
+  "iso_L0": {
+   "auc_selected": 0.7173847469583186,
+   "minus_R": 0.0,
+   "ci95": null
+  }
+ },
+ "fixed/L4": {
+  "n_rows": 38078,
+  "aligned_share": 1.0,
+  "mean_cos_ctx_vs_iso": 0.9386358332377884,
+  "neighbour_overlap_with_L0": 0.5352666666666667,
+  "R": 0.7181138904816514,
+  "M2_L": {
+   "auc_selected": 0.6517317270303364,
+   "minus_R": -0.06638216345131498,
+   "ci95": [
+    -0.08149664453241946,
+    -0.051307194990563874
+   ]
+  },
+  "ctx_L": {
+   "auc_selected": 0.6556781200954644,
+   "minus_R": -0.06243577038618697,
+   "ci95": [
+    -0.07750893231321974,
+    -0.04758147174180974
+   ]
+  },
+  "iso_L": {
+   "auc_selected": 0.7248289596758494,
+   "minus_R": 0.0067150691941979535,
+   "ci95": [
+    -0.0020653191353119217,
+    0.015306469737991548
+   ]
+  },
+  "ctx_L0": {
+   "auc_selected": 0.6481166057350853,
+   "minus_R": -0.06999728474656608,
+   "ci95": [
+    -0.08482376423154737,
+    -0.05569589687782017
+   ]
+  },
+  "iso_L0": {
+   "auc_selected": 0.7181138904816514,
+   "minus_R": 0.0,
+   "ci95": null
+  }
+ }
+}
