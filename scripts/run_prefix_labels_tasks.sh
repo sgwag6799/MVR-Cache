@@ -18,6 +18,15 @@ sync_drive() {
   fi
 }
 
+# 새 런타임이라 data/ 가 비어 있으면 autosave 로 커밋된 결과를 되돌려 놓는다 → 끝난 단계는 건너뜀
+SAVED=$REPO/mvr-cache/benchmarks/prefix/results_labels_tasks
+for pool in prefix prefix_task; do
+  for d in "$SAVED/$pool"/offline_* "$SAVED/$pool"/contamination_*; do
+    [ -d "$d" ] && [ ! -e "$DATA/$pool/$(basename "$d")" ] && mkdir -p "$DATA/$pool" && cp -r "$d" "$DATA/$pool/" \
+      && echo "[restore] $pool/$(basename "$d")"
+  done
+done
+
 # 0. 하위 과제별 공통 문장 풀로 데이터 만들기 + 점검
 if [ ! -f "$DATA/prefix_task/data/data_meta.json" ]; then
   python -m benchmarks.prefix.make_prefix_data --pool benchmarks/prefix/prefix_pool_task.json \
@@ -45,5 +54,7 @@ run prefix_task 70b response_llama_3_70b
 run prefix 70b response_llama_3_70b
 # 공용 풀 · 8B 오프라인은 이미 있음 (stage1_out). 문맥 오염만 과제별 지표를 넣어 다시 돈다.
 mkdir -p "$DATA/prefix/offline_8b" && cp -n "$DATA/prefix/offline/"* "$DATA/prefix/offline_8b/" 2>/dev/null || true
+# data/prefix/offline 이 없는 새 런타임에서는 커밋된 stage1_out 을 쓴다
+cp -n "$REPO/mvr-cache/benchmarks/prefix/stage1_out/"prefix_* "$DATA/prefix/offline_8b/" 2>/dev/null || true
 run prefix 8b response_llama_3_8b
 echo "ALL DONE"
