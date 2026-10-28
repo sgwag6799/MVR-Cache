@@ -572,3 +572,15 @@ python -m benchmarks.prefix.prefix_encode_sep --data ../data/prefix/data --out .
 - **게이트는 M3를 크게 떨어뜨린다** (LmArena L8 `auc_pairs` 0.769 → 0.679, L0에서도 0.734 → 0.702). `w / max(w)`로 max를 가리면, 학습 초기에 가중치가 조금만 낮아진 조각도 짝 후보에서 빠져 학습이 엉뚱한 쪽으로 간다 (추정). 반면 **정답 경계를 아는 M4에는 게이트가 조금 도움이 된다** (LmArena L4·L8 `auc_pairs` 0.791 · 0.776 → 0.801 · 0.800, 10절의 "후보 쪽 공통 조각까지 빼기"와 같은 효과).
 - **listwise는 BCE보다 낮다.** 정답 · 오답이 모두 있는 train 행만 쓰므로 학습 행이 크게 줄어든다: LmArena 172~453행(전체 3,007), Classification 1,666~2,132행(2,791). LmArena에서 특히 불리하다.
 - 결론: 가중치 식에서 얻을 여지는 작다. 14절(인코딩 분리)이 훨씬 효과가 크다.
+
+## 16. 실험 5: 문장 단위 분할 (설계 밖, 2026-10-28, 브랜치 `prefix-exp5-sentence-split`)
+
+**왜:** 지금 분할은 `. , ! ? ; :` 모두에서 잘라 2~5토큰짜리 짧은 조각이 많다. 짧은 조각은 평균 낼 토큰이 적어 앞 문맥(공통 문단)에 더 휩쓸릴 수 있다 (가설).
+
+### 16.1 설계 (실행 전 고정)
+
+- `prefix_split.cut_points(punct=...)`, `prefix_offline.py` · `prefix_contamination.py`에 `--cut-punct` 추가 (기본값이면 기존과 같음). 이번 실행은 `--cut-punct '.!?'`
+- 공통 문장은 끝 마침표 하나뿐이라 여전히 문장 하나 = 조각 하나. 원본 부분만 조각이 길어진다. 상한 32 · `cap_scope original`은 그대로
+- 데이터: Classification 공용 풀 · 8B, LmArena 합친 정답. 오프라인은 L0 · L4 · L8 (`--save-scores`), 문맥 오염은 L4 · L8
+- 비교 대상: 같은 데이터의 기존 분할 결과 (`exp1_within_task/scores_prefix_8b`, `exp2_lmarena/offline_merged`, `contamination_merged`, 10절)
+- 볼 것: R 자체의 변화, M2 하락, M3 회복률, 조각 cos (ctx vs iso), ctx × L0

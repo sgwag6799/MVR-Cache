@@ -57,6 +57,8 @@ EXTRA_CONDITIONS = ("M5", "M6")  # 탐색용: M5 idf, M6 centroid (라벨 미사
 MIN_WEIGHT = 1e-3  # gpu-production RuleSplitter와 같은 하한
 # 실험 4: True면 가중치를 max 대상에도 적용 (main에서 --maxsim-gate로 설정). 균등 가중치(M2)는 값이 그대로다
 MAXSIM_GATE = False
+# 실험 5: 자르는 구두점 (None = prefix_split.PUNCT_TOKENS 6개). main에서 --cut-punct로 설정
+CUT_PUNCT = None
 
 
 # ----------------------------------------------------------------------------- 인코딩
@@ -86,7 +88,8 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
             tokens = tok.convert_ids_to_tokens(ids)
             off = [tuple(o) for o in offsets[j][:length]]
             pend = ps.prefix_token_end(off, n_chars[i])
-            cuts = ps.cut_points(tokens, length, max_cuts=max_cuts, cap_scope=cap_scope, prefix_end=pend)
+            cuts = ps.cut_points(tokens, length, max_cuts=max_cuts, cap_scope=cap_scope, prefix_end=pend,
+                                 punct=CUT_PUNCT)
             spans = ps.segment_spans(length, cuts)
             h = hs[j]
             segs[i] = torch.stack([h[s:e].mean(0) for s, e in spans]).half().cpu()
@@ -384,12 +387,15 @@ def main() -> None:
                    help="Experiment 4: weights also gate the max (low-weight segments cannot be the best match).")
     p.add_argument("--loss", default="bce", choices=["bce", "listwise"],
                    help="Experiment 4: M3 training loss (bce = original, listwise = per-row softmax over candidates).")
+    p.add_argument("--cut-punct", default=None,
+                   help="Experiment 5: cut tokens as one string, e.g. '.!?' for sentence-level segments (default: . , ! ? ; :)")
     p.add_argument("--save-scores", action="store_true",
                    help="Save per-pair scores and labels (scores_<mode>_L<L>.npz) for bootstrap CIs.")
     args = p.parse_args()
     conditions = CONDITIONS + tuple(args.extra_conditions)
-    global MAXSIM_GATE
+    global MAXSIM_GATE, CUT_PUNCT
     MAXSIM_GATE = args.maxsim_gate
+    CUT_PUNCT = set(args.cut_punct) if args.cut_punct else None
 
     from transformers import AutoModel, AutoTokenizer
 

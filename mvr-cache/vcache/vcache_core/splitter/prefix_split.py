@@ -107,15 +107,16 @@ def prefix_token_end(offsets: list, prefix_chars: int) -> int:
 
 
 def cut_points(tokens: list, length: int, *, max_cuts: Optional[int] = 32,
-               cap_scope: str = "original", prefix_end: int = 1) -> list:
+               cap_scope: str = "original", prefix_end: int = 1, punct: Optional[set] = None) -> list:
     """Token positions to cut at (inclusive segment ends).
 
     tokens: token strings of the sequence (incl. [CLS] and [SEP]), length: real length.
-    max_cuts None or < 0 = no cap.
+    max_cuts None or < 0 = no cap. punct: cut tokens (default PUNCT_TOKENS; experiment 5 uses . ! ?).
     """
     if length <= 3:
         return []
-    cuts = [i for i in range(1, length - 2) if tokens[i] in PUNCT_TOKENS]
+    punct = PUNCT_TOKENS if punct is None else punct
+    cuts = [i for i in range(1, length - 2) if tokens[i] in punct]
     if max_cuts is None or max_cuts < 0:
         return cuts
     if cap_scope == "all":

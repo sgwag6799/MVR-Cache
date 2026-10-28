@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from benchmarks.prefix import prefix_offline
 from benchmarks.prefix._shared import ps
 from benchmarks.prefix.prefix_offline import (auc, clear_pad_cache, encode_split, metrics, neighbours,
                                               score_pairs)
@@ -79,10 +80,13 @@ def main() -> None:
     p.add_argument("--cap-scope", default="original", choices=["original", "all"])
     p.add_argument("--resp-col", default="response_llama_3_8b")
     p.add_argument("--bootstrap", type=int, default=2000)
+    p.add_argument("--cut-punct", default=None,
+                   help="Experiment 5: cut tokens as one string, e.g. '.!?' (default: . , ! ? ; :)")
     args = p.parse_args()
 
     from transformers import AutoModel, AutoTokenizer
 
+    prefix_offline.CUT_PUNCT = set(args.cut_punct) if args.cut_punct else None
     os.makedirs(args.out, exist_ok=True)
     tok = AutoTokenizer.from_pretrained(args.model)
     lm = AutoModel.from_pretrained(args.model).to(args.device).eval()
