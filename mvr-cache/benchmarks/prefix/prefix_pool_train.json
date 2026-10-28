@@ -1,0 +1,76 @@
+{
+ "description": "Training-only shared sentences for experiment 7 (invariance fine-tuning). 10 slots x 6 variants, slot roles different from prefix_pool.json, written without looking at the evaluation pool wording. One English sentence each, no punctuation except the final period, so each sentence is one segment. Never used for evaluation; overlap with prefix_pool.json is checked by prefix_invariance_train.py --check-pool.",
+ "tokenizer": "BAAI/bge-base-en-v1.5",
+ "slots": [
+  {"name": "context", "variants": [
+   "The current date is shown in the header and the user is located somewhere in Europe.",
+   "Today is a regular weekday and the office hours of the support team are still running.",
+   "The time zone of the requester is unknown so treat every date as coordinated universal time.",
+   "It is currently the busy season and many similar requests arrive within a short period.",
+   "The service is running in its normal mode and no maintenance window is scheduled today.",
+   "This request arrives during a quiet period with very few other messages in the queue."]},
+  {"name": "audience", "variants": [
+   "Most readers of the reply are adults with no special background in the topic.",
+   "Assume the person reading the response has only basic knowledge of computers and the internet.",
+   "The reply may be read aloud by a screen reader so write in a way that sounds natural.",
+   "Imagine the reader is busy and will only glance at the first part of your message.",
+   "The audience includes students and working professionals from many different countries.",
+   "Treat the reader as a curious beginner who prefers plain words over specialist terms."]},
+  {"name": "persona", "variants": [
+   "Your name inside this product is Atlas and you were set up by the operations team.",
+   "You speak on behalf of a small company that sells household goods through its online shop.",
+   "Behave like an experienced librarian who enjoys pointing people toward useful sources.",
+   "You represent a public information desk that serves residents of a mid sized city.",
+   "Picture yourself as a patient tutor who has helped many learners over the years.",
+   "You are configured as the default helper for the internal knowledge base of the company."]},
+  {"name": "length", "variants": [
+   "Limit the response to roughly fifty words unless the request clearly needs more detail.",
+   "A short paragraph is usually enough and anything longer should be avoided when possible.",
+   "Try to fit the whole reply into two or three sentences at the very most.",
+   "Long explanations tend to be skipped so aim for the shortest helpful answer.",
+   "Stop writing as soon as the main point has been made and nothing important remains.",
+   "Keep the total length small because the reply is shown inside a narrow chat window."]},
+  {"name": "citation", "variants": [
+   "When you mention a fact that came from the input you may point to where it appeared.",
+   "There is no need to cite external websites because the reader cannot open links here.",
+   "Do not invent references and leave out any source you cannot clearly identify.",
+   "If the input contains numbers then repeat them exactly as they were written.",
+   "Mention the part of the input you relied on only when it helps the reader follow along.",
+   "Quoting the input word for word is allowed when the exact wording matters for the answer."]},
+  {"name": "disclaimer", "variants": [
+   "Nothing in the reply should be taken as legal or medical advice from a professional.",
+   "The information provided here is general in nature and may not fit every situation.",
+   "Remind the reader to double check important decisions with a qualified person when relevant.",
+   "The service cannot guarantee that every answer is complete or perfectly up to date.",
+   "Any estimate you give is only a rough guide and the real value may differ.",
+   "The team behind this tool is not responsible for actions taken based on its replies."]},
+  {"name": "style", "variants": [
+   "A friendly and encouraging style works best for the people who use this tool.",
+   "Write as if you were talking to a colleague you respect and trust.",
+   "Prefer active voice and everyday verbs over formal or academic phrasing.",
+   "A light touch of warmth is welcome as long as the reply stays focused.",
+   "Avoid sounding robotic and let the reply read like it came from a thoughtful person.",
+   "Use a matter of fact style that gets straight to what the reader needs."]},
+  {"name": "fallback", "variants": [
+   "If the request cannot be handled then say so briefly and suggest a simple next step.",
+   "When the input is empty or unclear ask the user to send it again with more detail.",
+   "Should the task fall outside your abilities explain that limitation in one short sentence.",
+   "In case of missing information state what is missing instead of filling the gap yourself.",
+   "If several readings of the request are possible pick the most common one and continue.",
+   "When nothing useful can be said it is fine to reply that no answer is available."]},
+  {"name": "logging", "variants": [
+   "Each exchange is stored for thirty days to help improve the quality of future replies.",
+   "Request metadata such as the arrival time is recorded automatically by the platform.",
+   "A copy of this session may be reviewed later by members of the quality team.",
+   "Usage statistics from this conversation are collected in aggregate form only.",
+   "The system keeps a short log of recent messages in order to detect technical errors.",
+   "Replies generated in this channel are sampled at random for manual review each week."]},
+  {"name": "version", "variants": [
+   "This deployment uses the latest stable configuration released by the engineering group.",
+   "The assistant runs on an updated model build that was rolled out earlier this month.",
+   "Settings for this channel were last changed during the most recent release cycle.",
+   "You are operating under the standard profile that applies to all public channels.",
+   "The current build includes recent fixes that make replies more consistent over time.",
+   "This instance follows the default rules that were agreed on for production traffic."]}
+ ]
+}
