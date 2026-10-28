@@ -429,3 +429,48 @@ python -m benchmarks.prefix.prefix_within_task_gate --out benchmarks/prefix/exp1
 13.2의 라벨 잡음을 고친 정답으로 같은 실행을 한 번 더 한다. **이 분석은 결과를 본 뒤 정했다.**
 - 정답 c: 글자까지 같은 프롬프트를 공유하는 `ID_Set`들을 하나로 합친 묶음 (union-find, 원본 63,796행 전체 기준). 열 이름 `id_set_merged`
 - 분할 · 공통 문단 · 나머지 설정은 13.1과 같다 (분할은 다시 만들지 않음)
+
+### 13.4 민감도 분석 결과 (합친 정답, 탐색)
+
+출력: [`exp2_lmarena/offline_merged/`](mvr-cache/benchmarks/prefix/exp2_lmarena/offline_merged/), [`contamination_merged/`](mvr-cache/benchmarks/prefix/exp2_lmarena/contamination_merged/). `ID_Set` 3,500 → 합친 묶음 3,303.
+
+| 단계 | top1_acc M2 / M3 / M4 | `auc_selected` M2 / M3 / M4 | `auc_pairs` M2 / M3 / M4 | `tpr_at_fpr1` M2 / M3 |
+|---|---|---|---|---|
+| L0 (R) | 0.992 | 0.734 | 0.826 | 0.162 |
+| L2 | 0.985 / 0.986 / 0.987 | 0.613 / 0.616 / 0.621 | 0.722 / 0.751 / 0.756 | 0.033 / 0.040 |
+| L4 | 0.977 / 0.983 / 0.984 | 0.613 / 0.659 / 0.663 | 0.721 / 0.789 / 0.791 | 0.030 / 0.040 |
+| L8 | 0.950 / 0.965 / 0.968 | 0.616 / **0.694** / 0.691 | 0.667 / **0.769** / 0.776 | 0.039 / 0.053 |
+| 고정 L4 | 0.991 / 0.991 / 0.991 | 0.805 / 0.793 / 0.797 | 0.847 / 0.843 / 0.846 | 0.203 / 0.196 |
+
+회복률과 95% 구간 (앵커 부트스트랩 500회)
+
+| 단계 | 지표 | 하락 R−M2 | M3 회복률 | M4 회복률 | M3 − M4 |
+|---|---|---|---|---|---|
+| L4 | `auc_selected` | 0.120 [0.062, 0.182] | 0.38 [0.11, 0.89] | 0.42 [0.13, 0.89] | −0.004 [−0.022, +0.012] |
+| L4 | `auc_pairs` | 0.104 [0.086, 0.125] | **0.65** [0.55, 0.79] | 0.67 [0.56, 0.82] | −0.002 |
+| L8 | `auc_selected` | 0.117 [0.054, 0.182] | **0.66** [0.37, 1.37] | 0.63 [0.33, 1.27] | +0.003 [−0.013, +0.022] |
+| L8 | `auc_pairs` | 0.159 [0.136, 0.185] | **0.65** [0.56, 0.75] | 0.69 [0.60, 0.81] | −0.007 |
+
+- **판정 (기준 지표 `auc_selected`): L8 통과** (하락 0.117, 회복률 0.66). L4는 회복률 0.38로 미달.
+- 단 1등 오답이 L0 49개, L8 299개뿐이라 `auc_selected` 구간이 넓다. 6만 쌍 전체의 **`auc_pairs`로 보면 L4·L8 모두 회복률 0.65이고 구간 [0.55, 0.79]가 0.5 위**에 있다.
+- **M3 ≈ M4** (차이 −0.007 ~ +0.003): 사전 해석표의 "M2 하락, M3 회복, M3 ≈ M4 → 학습 가중치가 공통 조각을 스스로 낮춤, 조건부 양성" 칸. Classification(8·11·12절)에서는 나오지 않던 패턴이다.
+- 문맥 오염 (L8, R과의 차이): ctx × L0 −0.123 [−0.205, −0.046], iso × L +0.126 [+0.081, +0.174]. 오염 손실은 여전히 크다. 그래도 가중치가 효과를 보는 이유는, 프롬프트가 짧아 (원본 조각 평균 4.3개) L8에서 공통 조각이 조각 12개 중 8개를 차지하므로 공통 조각을 낮추는 것만으로 얻을 몫이 크기 때문으로 보인다 (해석).
+- 고정 L4는 하락이 없다 (M2 0.805 > R). 모든 프롬프트에 같은 문장이면 점수에 상수가 더해질 뿐이다.
+- 13.2의 `auc_selected` 0.47은 라벨 잡음 때문이었음이 확인된다 (합친 뒤 0.73).
+
+### 13.5 정리
+
+- 사전 고정 실행(13.2)은 라벨 잡음 때문에 판정할 수 없었다. 잡음을 고친 탐색 실행(13.4)에서는 **L8 통과, M3 ≈ M4, `auc_pairs` 회복률 0.65 [0.55, 0.79]**.
+- 즉 "공통 문단 비중이 큰(짧은 프롬프트) 환경에서는 학습 가중치가 필요하다"는 조건부 양성 결과의 근거가 처음 나왔다. 다만 라벨 정의를 결과 후에 고쳤으므로 확정하려면 **합친 정답을 사전 고정한 2단계(41K 스트림) 또는 다른 데이터에서의 재현**이 필요하다.
+- 다음: 실험 3 (인코딩 단계에서 공통 부분 분리), Classification과 LmArena 두 데이터에서.
+
+```bash
+python scripts/make_lmarena_splits.py --raw data/raw_lmarena/train.parquet --out data/lmarena
+python -m benchmarks.prefix.make_prefix_data --train ../data/lmarena/train.parquet --val ../data/lmarena/val.parquet \
+  --test ../data/lmarena/test.parquet --out ../data/lmarena/prefix/data            # (mvr-cache 에서)
+python scripts/lmarena_merge_duplicate_sets.py --data data/lmarena/prefix/data     # 13.3 민감도용
+python -m benchmarks.prefix.prefix_offline --data ../data/lmarena/prefix/data --out ../data/lmarena/prefix/offline_merged \
+  --resp-col id_set_merged --extra-conditions M5 M6 --save-scores
+python -m benchmarks.prefix.prefix_contamination --data ../data/lmarena/prefix/data --out ../data/lmarena/prefix/contamination_merged \
+  --resp-col id_set_merged
+```
