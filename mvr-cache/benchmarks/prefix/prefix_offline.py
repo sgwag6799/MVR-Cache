@@ -55,6 +55,8 @@ from benchmarks.prefix._shared import ps
 CONDITIONS = ("M1", "M2", "M3", "M4")
 EXTRA_CONDITIONS = ("M5", "M6")  # 탐색용: M5 idf, M6 centroid (라벨 미사용)
 MIN_WEIGHT = 1e-3  # gpu-production RuleSplitter와 같은 하한
+# 실험 4: True면 가중치를 max 대상에도 적용 (main에서 --maxsim-gate로 설정). 균등 가중치(M2)는 값이 그대로다
+MAXSIM_GATE = False
 
 
 # ----------------------------------------------------------------------------- 인코딩
@@ -195,9 +197,20 @@ def weights(cond, x, m, pf, head, fw=None):
 
 
 def smaxsim01(qx, qm, qw, cx, cm, cw):
-    """Symmetric weighted SMaxSim -> [0, 1] (same as VerifiedSplitterDecisionPolicy._maxsim_from_tensors)."""
+    """Symmetric weighted SMaxSim -> [0, 1] (same as VerifiedSplitterDecisionPolicy._maxsim_from_tensors).
+
+    With MAXSIM_GATE the weights also gate the max: each side's segments are scaled by
+    w / max(w) of their prompt before the max on [0, 1] cosines, so a low-weight segment of the
+    other prompt cannot be the best match. Uniform weights give exactly the ungated score."""
     qn, cn = F.normalize(qx, dim=-1), F.normalize(cx, dim=-1)
     cos = torch.bmm(qn, cn.transpose(1, 2))
+    if MAXSIM_GATE:
+        cos01 = (cos + 1.0) * 0.5
+        qg = qw / qw.max(1, keepdim=True).values.clamp_min(1e-12)
+        cg = cw / cw.max(1, keepdim=True).values.clamp_min(1e-12)
+        row = (cos01 * cg.unsqueeze(1)).masked_fill(~cm.unsqueeze(1), -1.0).max(2).values.masked_fill(~qm, 0.0)
+        col = (cos01 * qg.unsqueeze(2)).masked_fill(~qm.unsqueeze(2), -1.0).max(1).values.masked_fill(~cm, 0.0)
+        return (0.5 * (qw * row).sum(1) + 0.5 * (cw * col).sum(1)).clamp(0.0, 1.0)
     row = cos.masked_fill(~cm.unsqueeze(1), -1e4).max(2).values.masked_fill(~qm, 0.0)
     col = cos.masked_fill(~qm.unsqueeze(2), -1e4).max(1).values.masked_fill(~cm, 0.0)
     raw = 0.5 * (qw * row).sum(1) + 0.5 * (cw * col).sum(1)
@@ -258,10 +271,13 @@ def metrics(scores, c):
 
 
 def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, seed, dim,
-               k=10, select_metric="auc_pairs", patience=0):
+               k=10, select_metric="auc_pairs", patience=0, loss_type="bce"):
     """select_metric: val metric for picking the epoch ('auc_pairs' = all val pairs, the
     original rule; 'auc_selected' = each val row's #1 candidate, same as the gate metric).
-    patience: stop after this many epochs without a new best (0 = run all epochs)."""
+    patience: stop after this many epochs without a new best (0 = run all epochs).
+    loss_type: 'bce' = every pair on its own (original); 'listwise' = per row, softmax over its k
+    candidates (logit a*s) and -log of the probability mass on the correct ones, rows with both a
+    correct and a wrong candidate only (closer to the #1-candidate decision the gate measures)."""
     torch.manual_seed(seed)
     head = SegmentHead(dim).to(device)
     calib = nn.Parameter(torch.tensor([10.0, -5.0], device=device))  # 점수 → 로짓 (a·s + b)
@@ -271,26 +287,47 @@ def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, 
     pos_weight = (1 - y_t.mean()) / y_t.mean().clamp_min(1e-6)  # 클래스 비율 보정
     best = {"epoch": -1, "val_auc": -1.0, "state": None}
     log = []
+    groups = np.arange(len(y)).reshape(-1, k)  # within_pairs: 행마다 후보 k개가 연속
+    yg = y.reshape(-1, k)
+    mixed = np.where((yg.sum(1) > 0) & (yg.sum(1) < k))[0]  # 정답 · 오답이 모두 있는 행
     for ep in range(epochs):
         head.train()
-        perm = np.random.default_rng(seed + ep).permutation(len(y))
-        tot = 0.0
-        for b in range(0, len(perm), batch):
-            j = perm[b:b + batch]
-            qx, qm, _ = pad(*bank_tr, qi[j], device)
-            cx, cm, _ = pad(*bank_tr, ci[j], device)
-            s = smaxsim01(qx, qm, head(qx, qm), cx, cm, head(cx, cm))
-            loss = F.binary_cross_entropy_with_logits(calib[0] * s + calib[1], y_t[j], pos_weight=pos_weight)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            tot += loss.item() * len(j)
+        tot, n_seen = 0.0, 0
+        if loss_type == "listwise":
+            perm = np.random.default_rng(seed + ep).permutation(mixed)
+            step = max(1, batch // k)
+            for b in range(0, len(perm), step):
+                j = groups[perm[b:b + step]].reshape(-1)
+                qx, qm, _ = pad(*bank_tr, qi[j], device)
+                cx, cm, _ = pad(*bank_tr, ci[j], device)
+                s = smaxsim01(qx, qm, head(qx, qm), cx, cm, head(cx, cm)).view(-1, k)
+                logp = torch.log_softmax(calib[0] * s, dim=1)
+                pos = y_t[j].view(-1, k) > 0.5
+                loss = -torch.logsumexp(logp.masked_fill(~pos, float("-inf")), dim=1).mean()
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                tot += loss.item() * len(j)
+                n_seen += len(j)
+        else:
+            perm = np.random.default_rng(seed + ep).permutation(len(y))
+            for b in range(0, len(perm), batch):
+                j = perm[b:b + batch]
+                qx, qm, _ = pad(*bank_tr, qi[j], device)
+                cx, cm, _ = pad(*bank_tr, ci[j], device)
+                s = smaxsim01(qx, qm, head(qx, qm), cx, cm, head(cx, cm))
+                loss = F.binary_cross_entropy_with_logits(calib[0] * s + calib[1], y_t[j], pos_weight=pos_weight)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                tot += loss.item() * len(j)
+                n_seen += len(j)
         head.eval()
         with torch.no_grad():
             vs = score_pairs("M3", bank_va, bank_va, pairs_va[0], pairs_va[1], device, head=head)
         vm = metrics(vs.reshape(-1, k), pairs_va[2].reshape(-1, k).astype(int))  # within_pairs는 행마다 k개씩
         va = vm[select_metric]
-        log.append({"epoch": ep, "train_bce": tot / len(y), "val_auc": va,
+        log.append({"epoch": ep, "train_loss": tot / max(n_seen, 1), "val_auc": va,
                     "val_auc_pairs": vm["auc_pairs"], "val_auc_selected": vm["auc_selected"]})
         if va > best["val_auc"]:
             best = {"epoch": ep, "val_auc": va, "state": {n: v.detach().clone() for n, v in head.state_dict().items()}}
@@ -299,7 +336,7 @@ def train_head(bank_tr, pairs_tr, bank_va, pairs_va, device, epochs, lr, batch, 
     head.load_state_dict(best["state"])
     head.eval()
     return head, {"selected_epoch": best["epoch"], "selected_val_auc": best["val_auc"],
-                  "select_metric": select_metric, "epochs_run": len(log), "epochs": log}
+                  "select_metric": select_metric, "loss": loss_type, "listwise_rows": int(len(mixed)), "epochs_run": len(log), "epochs": log}
 
 
 def within_pairs(knn, rows, labels, k, device):
@@ -319,7 +356,7 @@ def main() -> None:
     p.add_argument("--data", required=True, help="Output folder of make_prefix_data.py")
     p.add_argument("--out", required=True)
     p.add_argument("--levels", type=int, nargs="+", default=[0, 2, 4, 8])
-    p.add_argument("--fixed-levels", type=int, nargs="+", default=[4])
+    p.add_argument("--fixed-levels", type=int, nargs="*", default=[4])
     p.add_argument("--model", default="BAAI/bge-base-en-v1.5")
     p.add_argument("--device", default="cuda")
     p.add_argument("--no-fp16", action="store_true")
@@ -343,10 +380,16 @@ def main() -> None:
                    help="M3 epoch selection on val: all pairs (original rule) or each row's #1 candidate.")
     p.add_argument("--patience", type=int, default=0,
                    help="M3 early stopping: epochs without a new best val score (0 = off).")
+    p.add_argument("--maxsim-gate", action="store_true",
+                   help="Experiment 4: weights also gate the max (low-weight segments cannot be the best match).")
+    p.add_argument("--loss", default="bce", choices=["bce", "listwise"],
+                   help="Experiment 4: M3 training loss (bce = original, listwise = per-row softmax over candidates).")
     p.add_argument("--save-scores", action="store_true",
                    help="Save per-pair scores and labels (scores_<mode>_L<L>.npz) for bootstrap CIs.")
     args = p.parse_args()
     conditions = CONDITIONS + tuple(args.extra_conditions)
+    global MAXSIM_GATE
+    MAXSIM_GATE = args.maxsim_gate
 
     from transformers import AutoModel, AutoTokenizer
 
@@ -397,7 +440,8 @@ def main() -> None:
         va_pairs = within_pairs(knns["val"], np.arange(len(dfs["val"])), labels["val"], args.k, args.device)
         head, tlog = train_head(banks["train"], tr_pairs, banks["val"], va_pairs, args.device,
                                 args.epochs, args.lr, args.batch, args.seed, dim,
-                                k=args.k, select_metric=args.select_metric, patience=args.patience)
+                                k=args.k, select_metric=args.select_metric, patience=args.patience,
+                                loss_type=args.loss)
         train_logs[f"{mode}/L{level}"] = {k: v for k, v in tlog.items() if k != "epochs"} | {"epochs": tlog["epochs"]}
         torch.save({"state": head.state_dict(), "dim": dim, "mode": mode, "level": level,
                     "max_cuts": args.max_cuts, "cap_scope": args.cap_scope, "model": args.model,

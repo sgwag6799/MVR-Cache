@@ -534,3 +534,21 @@ python -m benchmarks.prefix.prefix_contamination --data ../data/lmarena/prefix/d
 python -m benchmarks.prefix.prefix_encode_sep --data ../data/lmarena/prefix/data --out ../data/exp3/lmarena --resp-col id_set_merged
 python -m benchmarks.prefix.prefix_encode_sep --data ../data/prefix/data --out ../data/exp3/cls_prefix_8b --resp-col response_llama_3_8b
 ```
+
+## 15. 실험 4: 가중치 식 바꾸기 (설계 밖, 2026-10-28, 브랜치 `prefix-exp4-weighting`)
+
+**왜:** 지금 M3 식(`w = softmax(Linear(조각))`, `점수 = ½Σ w_q·max cos + ½Σ w_c·max cos`)에는 두 가지 빈틈이 있다. ① 가중치가 합산에만 곱해져, 상대 프롬프트의 공통 조각이 max 짝으로 뽑히는 것은 못 막는다. ② 모든 쌍에 BCE를 걸지만 판정은 앵커별 1등 후보로 한다.
+
+### 15.1 설계 (실행 전 고정)
+
+`prefix_offline.py`에 옵션 2개 추가 (기본값이면 8절과 같음):
+
+| 옵션 | 내용 |
+|---|---|
+| `--maxsim-gate` | max 전에 상대 조각의 cos(0~1로 변환)에 `w / max(w)`를 곱함 → 가중치 낮은 조각은 최대 짝이 될 수 없음. 균등 가중치(M2)는 값이 그대로 (확인함). M3 · M4 · M5 · M6 모두 적용 |
+| `--loss listwise` | M3 학습: train 행마다 후보 10개에 softmax(`a·s`), 정답 후보 확률 합의 −log. 정답 · 오답이 모두 있는 행만 사용 |
+
+- 비교: 기본(bce, 게이트 없음) / 게이트 / listwise / 게이트 + listwise
+- 데이터: Classification 공용 풀 · 8B (기본 = 12절 재실행 `exp1_within_task/scores_prefix_8b`), LmArena 합친 정답 (기본 = 13.4)
+- 단계 L0 · L4 · L8 (통과 판정에 필요한 단계만), 나머지 설정은 8절과 같음, `--save-scores`
+- 판정: 8절 기준 (`auc_selected`) + `auc_pairs` 회복률, M3 − M4
