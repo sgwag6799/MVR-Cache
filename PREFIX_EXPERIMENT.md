@@ -584,3 +584,18 @@ python -m benchmarks.prefix.prefix_encode_sep --data ../data/prefix/data --out .
 - 데이터: Classification 공용 풀 · 8B, LmArena 합친 정답. 오프라인은 L0 · L4 · L8 (`--save-scores`), 문맥 오염은 L4 · L8
 - 비교 대상: 같은 데이터의 기존 분할 결과 (`exp1_within_task/scores_prefix_8b`, `exp2_lmarena/offline_merged`, `contamination_merged`, 10절)
 - 볼 것: R 자체의 변화, M2 하락, M3 회복률, 조각 cos (ctx vs iso), ctx × L0
+
+### 16.2 결과 (2026-10-28, NVIDIA L4)
+
+출력: [`exp5_sentence_split/`](mvr-cache/benchmarks/prefix/exp5_sentence_split/). 기존 = 6개 구두점 분할. 회복률 [95%, 부트스트랩 300회].
+
+| 데이터 | 분할 | R `auc_selected` | L8 M2 → M3 | L8 회복률 `auc_selected` | L8 회복률 `auc_pairs` | L8 조각 cos (ctx vs iso) | L8 ctx × L0 |
+|---|---|---|---|---|---|---|---|
+| LmArena | 기존 | 0.734 | 0.616 → 0.694 | 0.66 [0.36, 1.39] | 0.65 [0.56, 0.75] | 0.844 | −0.123 |
+| LmArena | 문장 | 0.737 | 0.604 → 0.669 | 0.49 [0.26, 0.94] | 0.63 [0.55, 0.73] | 0.846 | −0.112 |
+| Classification | 기존 | 0.697 | 0.624 → 0.650 | 0.36 [0.24, 0.48] | 0.15 [0.13, 0.17] | 0.873 | −0.043 |
+| Classification | 문장 | 0.699 | 0.624 → 0.652 | 0.37 [0.25, 0.49] | 0.15 [0.13, 0.17] | 0.873 | −0.044 |
+
+- **차이 없음.** R, 하락, 회복률, 조각 cos, 문맥 오염 손실(ctx × L0)이 모두 구간 안에서 같다. L4도 같다 (Classification 회복률 0.23 → 0.34, 구간 겹침).
+- 가설("짧은 조각이 문맥에 더 휩쓸린다")은 지지되지 않는다. 조각 벡터의 변화(cos)는 조각 길이가 아니라 공통 문단 길이로 정해진다 (L4 0.91~0.94, L8 0.85~0.87, 분할과 무관).
+- 판정은 두 분할 모두 같다: LmArena L8 `auc_pairs` 기준으로는 회복, Classification은 미달.

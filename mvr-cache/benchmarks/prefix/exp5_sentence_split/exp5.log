@@ -1,0 +1,15 @@
+## lmarena offline
+[variant L0] 55s  M1 auc_sel=0.7358  M2 auc_sel=0.7370  M3 auc_sel=0.7375  M4 auc_sel=0.7370
+[variant L4] 95s  M1 auc_sel=0.6176  M2 auc_sel=0.6084  M3 auc_sel=0.6593  M4 auc_sel=0.6608
+[variant L8] 143s  M1 auc_sel=0.6167  M2 auc_sel=0.6038  M3 auc_sel=0.6693  M4 auc_sel=0.6887
+## lmarena contamination
+[variant L4] 104s  aligned=1.000 cos=0.9100 overlap=0.644  M2_L=0.6084  ctx_L=0.6575  iso_L=0.7630  ctx_L0=0.6089  iso_L0=0.7370
+[variant L8] 148s  aligned=1.000 cos=0.8463 overlap=0.554  M2_L=0.6038  ctx_L=0.6889  iso_L=0.8593  ctx_L0=0.6251  iso_L0=0.7370
+## cls offline
+[variant L0] 87s  M1 auc_sel=0.6970  M2 auc_sel=0.6989  M3 auc_sel=0.7008  M4 auc_sel=0.6989
+[variant L4] 128s  M1 auc_sel=0.6475  M2 auc_sel=0.6524  M3 auc_sel=0.6681  M4 auc_sel=0.6633
+[variant L8] 173s  M1 auc_sel=0.6234  M2 auc_sel=0.6242  M3 auc_sel=0.6520  M4 auc_sel=0.6431
+## cls contamination
+[variant L4] 132s  aligned=1.000 cos=0.9351 overlap=0.417  M2_L=0.6524  ctx_L=0.6620  iso_L=0.7033  ctx_L0=0.6608  iso_L0=0.6989
+[variant L8] 176s  aligned=1.000 cos=0.8734 overlap=0.320  M2_L=0.6242  ctx_L=0.6448  iso_L=0.7106  ctx_L0=0.6545  iso_L0=0.6989
+RUN_DONE
