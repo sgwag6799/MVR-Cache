@@ -1,0 +1,27 @@
+{
+  "seed": 42,
+  "rule": "whole ID_Sets in random.Random(42) order until each split reaches its size",
+  "raw_rows": 63796,
+  "raw_sets": 3500,
+  "splits": {
+    "train": {
+      "rows": 3010,
+      "sets": 171,
+      "fingerprint": "ec6e778ee76f",
+      "set_size_mean": 17.6
+    },
+    "val": {
+      "rows": 1001,
+      "sets": 57,
+      "fingerprint": "411c8e1b6412",
+      "set_size_mean": 17.56
+    },
+    "test": {
+      "rows": 41015,
+      "sets": 2236,
+      "fingerprint": "3e5cc1fe8fa8",
+      "set_size_mean": 18.34
+    }
+  },
+  "unused_sets": 1036
+}
