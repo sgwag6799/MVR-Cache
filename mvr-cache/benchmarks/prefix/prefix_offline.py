@@ -90,8 +90,8 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
             ids = enc["input_ids"][j][:length].tolist()
             tokens = tok.convert_ids_to_tokens(ids)
             off = [tuple(o) for o in offsets[j][:length]]
-            if suffix[i]:
-                sstart = ps.suffix_token_start(off, starts[i]) if n_chars[i] > 0 else length - 1
+            if suffix[i] and n_chars[i] > 0:  # 붙인 문장이 없으면 (L0) 원래 규칙 그대로
+                sstart = ps.suffix_token_start(off, starts[i])
                 cuts = ps.suffix_cut_points(tokens, length, sstart, max_cuts=max_cuts, punct=CUT_PUNCT)
             else:
                 pend = ps.prefix_token_end(off, n_chars[i])
@@ -100,7 +100,7 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
             spans = ps.segment_spans(length, cuts)
             h = hs[j]
             segs[i] = torch.stack([h[s:e].mean(0) for s, e in spans]).half().cpu()
-            flags[i] = torch.tensor(ps.suffix_segment_flags(spans, sstart) if suffix[i]
+            flags[i] = torch.tensor(ps.suffix_segment_flags(spans, sstart) if suffix[i] and n_chars[i] > 0
                                     else ps.prefix_segment_flags(spans, pend))
             knn[i] = h[:length].mean(0).cpu()  # [CLS]·[SEP] 포함 평균 = EmbeddingModel.get_embedding
             seg_ids[i] = [torch.tensor(ids[s:e]) for s, e in spans]
@@ -397,6 +397,9 @@ def main() -> None:
                    help="Experiment 4: M3 training loss (bce = original, listwise = per-row softmax over candidates).")
     p.add_argument("--cut-punct", default=None,
                    help="Experiment 5: cut tokens as one string, e.g. '.!?' for sentence-level segments (default: . , ! ? ; :)")
+    p.add_argument("--max-len", type=int, default=ps.MAX_LEN,
+                   help="Experiment 6: encoder input limit in its own tokens (e.g. 1024 for BAAI/bge-m3, so no row "
+                        "that fits 512 bge-base tokens is truncated)")
     p.add_argument("--save-scores", action="store_true",
                    help="Save per-pair scores and labels (scores_<mode>_L<L>.npz) for bootstrap CIs.")
     args = p.parse_args()
@@ -404,6 +407,7 @@ def main() -> None:
     global MAXSIM_GATE, CUT_PUNCT
     MAXSIM_GATE = args.maxsim_gate
     CUT_PUNCT = set(args.cut_punct) if args.cut_punct else None
+    ps.MAX_LEN = args.max_len  # encode_split 의 truncation 길이
 
     from transformers import AutoModel, AutoTokenizer
 

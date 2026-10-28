@@ -80,6 +80,8 @@ def main() -> None:
     p.add_argument("--cap-scope", default="original", choices=["original", "all"])
     p.add_argument("--resp-col", default="response_llama_3_8b")
     p.add_argument("--bootstrap", type=int, default=2000)
+    p.add_argument("--max-len", type=int, default=ps.MAX_LEN,
+                   help="Experiment 6: encoder input limit in its own tokens (e.g. 1024 for BAAI/bge-m3)")
     p.add_argument("--cut-punct", default=None,
                    help="Experiment 5: cut tokens as one string, e.g. '.!?' (default: . , ! ? ; :)")
     args = p.parse_args()
@@ -87,6 +89,7 @@ def main() -> None:
     from transformers import AutoModel, AutoTokenizer
 
     prefix_offline.CUT_PUNCT = set(args.cut_punct) if args.cut_punct else None
+    ps.MAX_LEN = args.max_len
     os.makedirs(args.out, exist_ok=True)
     tok = AutoTokenizer.from_pretrained(args.model)
     lm = AutoModel.from_pretrained(args.model).to(args.device).eval()
