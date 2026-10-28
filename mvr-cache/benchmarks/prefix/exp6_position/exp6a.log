@@ -1,0 +1,20 @@
+## lmarena offline
+[variant L0] 61s  M1 auc_sel=0.7358  M2 auc_sel=0.7335  M3 auc_sel=0.7353  M4 auc_sel=0.7335
+[variant L4] 100s  M1 auc_sel=0.5460  M2 auc_sel=0.5218  M3 auc_sel=0.5632  M4 auc_sel=0.5552
+[variant L8] 148s  M1 auc_sel=0.5120  M2 auc_sel=0.5341  M3 auc_sel=0.5541  M4 auc_sel=0.5562
+## lmarena contamination
+[variant L4] 107s  aligned=1.000 cos=0.9255 overlap=0.715  M2_L=0.5218  ctx_L=0.5598  iso_L=0.7261  ctx_L0=0.5979  iso_L0=0.7335
+[variant L8] 151s  aligned=1.000 cos=0.9091 overlap=0.698  M2_L=0.5341  ctx_L=0.5755  iso_L=0.7528  ctx_L0=0.5912  iso_L0=0.7335
+## cls data
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+variant L0 test: 41000 rows, truncated 1432, fits all levels 38304
+variant L4 test: 41000 rows, truncated 1904, fits all levels 38304
+variant L8 test: 41000 rows, truncated 2696, fits all levels 38304
+## cls offline
+[variant L0] 90s  M1 auc_sel=0.6970  M2 auc_sel=0.6970  M3 auc_sel=0.6999  M4 auc_sel=0.6970
+[variant L4] 131s  M1 auc_sel=0.6464  M2 auc_sel=0.6445  M3 auc_sel=0.6657  M4 auc_sel=0.6541
+[variant L8] 177s  M1 auc_sel=0.6428  M2 auc_sel=0.6443  M3 auc_sel=0.6691  M4 auc_sel=0.6586
+## cls contamination
+[variant L4] 137s  aligned=1.000 cos=0.9526 overlap=0.510  M2_L=0.6445  ctx_L=0.6547  iso_L=0.7050  ctx_L0=0.6617  iso_L0=0.6970
+[variant L8] 180s  aligned=1.000 cos=0.9320 overlap=0.453  M2_L=0.6443  ctx_L=0.6587  iso_L=0.7037  ctx_L0=0.6615  iso_L0=0.6970
+RUN_DONE
