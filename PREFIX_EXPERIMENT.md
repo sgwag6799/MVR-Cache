@@ -552,3 +552,23 @@ python -m benchmarks.prefix.prefix_encode_sep --data ../data/prefix/data --out .
 - 데이터: Classification 공용 풀 · 8B (기본 = 12절 재실행 `exp1_within_task/scores_prefix_8b`), LmArena 합친 정답 (기본 = 13.4)
 - 단계 L0 · L4 · L8 (통과 판정에 필요한 단계만), 나머지 설정은 8절과 같음, `--save-scores`
 - 판정: 8절 기준 (`auc_selected`) + `auc_pairs` 회복률, M3 − M4
+
+### 15.2 결과 (2026-10-28, NVIDIA L4)
+
+출력: [`exp4_weighting/`](mvr-cache/benchmarks/prefix/exp4_weighting/). M3 회복률 [95%, 앵커 부트스트랩 300회]. 기본 = 15.1의 기본 실행.
+
+| 데이터 | 설정 | L4 회복률 `auc_selected` | L4 회복률 `auc_pairs` | L8 회복률 `auc_selected` | L8 회복률 `auc_pairs` | L8 M3 − M4 (`auc_pairs`) |
+|---|---|---|---|---|---|---|
+| LmArena | **기본** | 0.38 [0.10, 0.89] | **0.65** [0.54, 0.80] | **0.66** [0.36, 1.39] | **0.65** [0.56, 0.75] | −0.007 |
+| LmArena | 게이트 | −0.23 | 0.15 | −0.24 | 0.08 | −0.121 |
+| LmArena | listwise | 0.24 | 0.41 | 0.40 | 0.42 | −0.044 |
+| LmArena | 게이트 + listwise | −0.25 | 0.20 | −0.38 | 0.11 | −0.116 |
+| Classification | **기본** | 0.23 [0.03, 0.44] | 0.23 | 0.36 [0.24, 0.48] | 0.15 | +0.006 |
+| Classification | 게이트 | −0.01 | 0.13 | −0.19 | 0.05 | −0.014 |
+| Classification | listwise | 0.13 | 0.14 | 0.25 | 0.10 | −0.001 |
+| Classification | 게이트 + listwise | 0.05 | 0.13 | −0.07 | 0.05 | −0.014 |
+
+- **두 변경 모두 M3를 낫게 하지 못했다.** 기본(BCE, 게이트 없음)이 두 데이터 · 두 단계 모두 가장 높다.
+- **게이트는 M3를 크게 떨어뜨린다** (LmArena L8 `auc_pairs` 0.769 → 0.679, L0에서도 0.734 → 0.702). `w / max(w)`로 max를 가리면, 학습 초기에 가중치가 조금만 낮아진 조각도 짝 후보에서 빠져 학습이 엉뚱한 쪽으로 간다 (추정). 반면 **정답 경계를 아는 M4에는 게이트가 조금 도움이 된다** (LmArena L4·L8 `auc_pairs` 0.791 · 0.776 → 0.801 · 0.800, 10절의 "후보 쪽 공통 조각까지 빼기"와 같은 효과).
+- **listwise는 BCE보다 낮다.** 정답 · 오답이 모두 있는 train 행만 쓰므로 학습 행이 크게 줄어든다: LmArena 172~453행(전체 3,007), Classification 1,666~2,132행(2,791). LmArena에서 특히 불리하다.
+- 결론: 가중치 식에서 얻을 여지는 작다. 14절(인코딩 분리)이 훨씬 효과가 크다.

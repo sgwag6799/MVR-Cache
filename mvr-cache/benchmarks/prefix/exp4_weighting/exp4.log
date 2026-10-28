@@ -1,0 +1,25 @@
+## lmarena gate
+[variant L0] 61s  M1 auc_sel=0.7358  M2 auc_sel=0.7336  M3 auc_sel=0.7021  M4 auc_sel=0.7336
+[variant L4] 101s  M1 auc_sel=0.6176  M2 auc_sel=0.6135  M3 auc_sel=0.5859  M4 auc_sel=0.6605
+[variant L8] 148s  M1 auc_sel=0.6167  M2 auc_sel=0.6165  M3 auc_sel=0.5883  M4 auc_sel=0.6793
+## lmarena listwise
+[variant L0] 57s  M1 auc_sel=0.7358  M2 auc_sel=0.7335  M3 auc_sel=0.7334  M4 auc_sel=0.7335
+[variant L4] 96s  M1 auc_sel=0.6176  M2 auc_sel=0.6135  M3 auc_sel=0.6424  M4 auc_sel=0.6634
+[variant L8] 143s  M1 auc_sel=0.6167  M2 auc_sel=0.6165  M3 auc_sel=0.6636  M4 auc_sel=0.6906
+## lmarena gate_listwise
+[variant L0] 56s  M1 auc_sel=0.7358  M2 auc_sel=0.7336  M3 auc_sel=0.7136  M4 auc_sel=0.7336
+[variant L4] 96s  M1 auc_sel=0.6176  M2 auc_sel=0.6135  M3 auc_sel=0.5837  M4 auc_sel=0.6605
+[variant L8] 143s  M1 auc_sel=0.6167  M2 auc_sel=0.6165  M3 auc_sel=0.5724  M4 auc_sel=0.6793
+## cls gate
+[variant L0] 92s  M1 auc_sel=0.6970  M2 auc_sel=0.6970  M3 auc_sel=0.6974  M4 auc_sel=0.6970
+[variant L4] 134s  M1 auc_sel=0.6475  M2 auc_sel=0.6537  M3 auc_sel=0.6533  M4 auc_sel=0.6646
+[variant L8] 179s  M1 auc_sel=0.6234  M2 auc_sel=0.6241  M3 auc_sel=0.6101  M4 auc_sel=0.6470
+## cls listwise
+[variant L0] 90s  M1 auc_sel=0.6970  M2 auc_sel=0.6970  M3 auc_sel=0.6999  M4 auc_sel=0.6970
+[variant L4] 131s  M1 auc_sel=0.6475  M2 auc_sel=0.6537  M3 auc_sel=0.6595  M4 auc_sel=0.6617
+[variant L8] 177s  M1 auc_sel=0.6234  M2 auc_sel=0.6241  M3 auc_sel=0.6422  M4 auc_sel=0.6413
+## cls gate_listwise
+[variant L0] 90s  M1 auc_sel=0.6970  M2 auc_sel=0.6970  M3 auc_sel=0.6973  M4 auc_sel=0.6970
+[variant L4] 131s  M1 auc_sel=0.6475  M2 auc_sel=0.6537  M3 auc_sel=0.6560  M4 auc_sel=0.6646
+[variant L8] 176s  M1 auc_sel=0.6234  M2 auc_sel=0.6241  M3 auc_sel=0.6190  M4 auc_sel=0.6470
+RUN_DONE
