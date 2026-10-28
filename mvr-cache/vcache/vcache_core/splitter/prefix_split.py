@@ -60,6 +60,13 @@ def join_prompt(prefix: str, prompt: str) -> tuple:
     return prefix + " " + prompt, len(prefix)
 
 
+def join_suffix(prefix: str, prompt: str) -> tuple:
+    """Experiment 6: the shared sentences after the prompt. (full prompt, first prefix character)."""
+    if not prefix:
+        return prompt, len(prompt)
+    return prompt + " " + prefix, len(prompt) + 1
+
+
 def detect_prefix_chars(text: str, pool: list) -> int:
     """Length of the leading run of pool sentences in `text` (0 if none).
 
@@ -104,6 +111,38 @@ def prefix_token_end(offsets: list, prefix_chars: int) -> int:
         else:
             break
     return end
+
+
+def suffix_token_start(offsets: list, start_char: int) -> int:
+    """Experiment 6: index of the first shared-sentence token when the sentences follow the prompt
+    (characters from start_char on); the [SEP] index when there are none."""
+    for i in range(1, len(offsets)):
+        a, b = offsets[i]
+        if a == 0 and b == 0:  # [SEP]
+            return i
+        if a >= start_char:
+            return i
+    return len(offsets) - 1
+
+
+def suffix_cut_points(tokens: list, length: int, suffix_start: int, *, max_cuts: Optional[int] = 32,
+                      punct: Optional[set] = None) -> list:
+    """Experiment 6: cut points when the shared sentences follow the prompt. The cap counts only
+    cuts inside the original part, every cut inside the suffix is kept, and the original part is
+    always closed right before the suffix so the two never share a segment. With the same cap the
+    original part is cut exactly like the same prompt without a suffix."""
+    punct = PUNCT_TOKENS if punct is None else punct
+    body = [i for i in range(1, min(suffix_start - 1, length - 2)) if tokens[i] in punct]
+    if max_cuts is not None and max_cuts >= 0:
+        body = body[:max_cuts]
+    tail = [i for i in range(suffix_start, length - 2) if tokens[i] in punct]
+    close = [suffix_start - 1] if 1 <= suffix_start - 1 < length - 1 else []
+    return sorted(set(body + close + tail))
+
+
+def suffix_segment_flags(spans: list, suffix_start: int) -> list:
+    """True for segments that lie entirely in the trailing shared sentences."""
+    return [s >= suffix_start for s, _ in spans]
 
 
 def cut_points(tokens: list, length: int, *, max_cuts: Optional[int] = 32,

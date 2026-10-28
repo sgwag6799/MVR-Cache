@@ -56,9 +56,12 @@ def main() -> None:
                    help="Levels built in fixed mode (reference only).")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--tokenizer", default="BAAI/bge-base-en-v1.5")
+    p.add_argument("--position", default="prefix", choices=["prefix", "suffix"],
+                   help="Experiment 6: put the shared sentences before (default) or after the prompt")
     args = p.parse_args()
 
     pools = load_pools(args.pool)
+    join = ps.join_suffix if args.position == "suffix" else ps.join_prompt
     tok = load_tokenizer(args.tokenizer)
     max_level = max(args.levels)
     splits = {"train": args.train, "val": args.val, "test": args.test}
@@ -77,21 +80,26 @@ def main() -> None:
             # 모든 단계에서 같은 행 집합을 쓰기 위해, 가장 긴 단계 기준으로 512토큰 이하인지 표시
             fits = []
             for prompt, ch, pool in zip(df["prompt"].astype(str), choices, pool_of):
-                text, _ = ps.join_prompt(ps.build_prefix(pool, ch, max_level), prompt)
+                text, _ = join(ps.build_prefix(pool, ch, max_level), prompt)
                 fits.append(encode(tok, text)[3] <= ps.MAX_LEN)
             for L in levels:
                 rows = []
                 for prompt, ch, pool in zip(df["prompt"].astype(str), choices, pool_of):
                     prefix = ps.build_prefix(pool, ch, L)
-                    text, n_chars = ps.join_prompt(prefix, prompt)
+                    text, start = join(prefix, prompt)
+                    n_chars = len(prefix)
+                    if args.position == "prefix":
+                        start = 0
                     full = encode(tok, text)[3]
-                    rows.append((text, prompt, prefix, n_chars, ",".join(map(str, ch[:L])), full))
+                    rows.append((text, prompt, prefix, n_chars, ",".join(map(str, ch[:L])), full, start))
                 out = df.copy()
                 out["prompt"] = [r[0] for r in rows]
                 out["orig_prompt"] = [r[1] for r in rows]
                 out["prefix_text"] = [r[2] for r in rows]
                 out["prefix_chars"] = [r[3] for r in rows]
                 out["prefix_choice"] = [r[4] for r in rows]
+                out["prefix_position"] = args.position
+                out["prefix_start"] = [r[6] for r in rows]
                 out["level"] = L
                 out["n_tokens"] = [r[5] for r in rows]
                 out["truncated"] = out["n_tokens"] > ps.MAX_LEN

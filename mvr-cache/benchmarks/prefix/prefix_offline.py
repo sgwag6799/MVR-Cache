@@ -70,6 +70,9 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
     single vectors [N,H] (fp32, L2-normalised), per-segment token ids (list of lists of tensors)."""
     texts = df["prompt"].astype(str).tolist()
     n_chars = df["prefix_chars"].astype(int).tolist()
+    # 실험 6: 공통 문장이 원본 뒤에 붙은 데이터 (make_prefix_data --position suffix)
+    suffix = df["prefix_position"].eq("suffix").tolist() if "prefix_position" in df else [False] * len(texts)
+    starts = df["prefix_start"].astype(int).tolist() if "prefix_start" in df else [0] * len(texts)
     order = np.argsort([len(t) for t in texts])  # 길이순으로 묶어 패딩 낭비를 줄임
     segs, flags, knn = [None] * len(texts), [None] * len(texts), [None] * len(texts)
     seg_ids = [None] * len(texts)  # M5(idf)용 조각별 토큰 번호
@@ -87,13 +90,18 @@ def encode_split(df, tok, lm, device, max_cuts, cap_scope, batch_size=64, fp16=T
             ids = enc["input_ids"][j][:length].tolist()
             tokens = tok.convert_ids_to_tokens(ids)
             off = [tuple(o) for o in offsets[j][:length]]
-            pend = ps.prefix_token_end(off, n_chars[i])
-            cuts = ps.cut_points(tokens, length, max_cuts=max_cuts, cap_scope=cap_scope, prefix_end=pend,
-                                 punct=CUT_PUNCT)
+            if suffix[i]:
+                sstart = ps.suffix_token_start(off, starts[i]) if n_chars[i] > 0 else length - 1
+                cuts = ps.suffix_cut_points(tokens, length, sstart, max_cuts=max_cuts, punct=CUT_PUNCT)
+            else:
+                pend = ps.prefix_token_end(off, n_chars[i])
+                cuts = ps.cut_points(tokens, length, max_cuts=max_cuts, cap_scope=cap_scope, prefix_end=pend,
+                                     punct=CUT_PUNCT)
             spans = ps.segment_spans(length, cuts)
             h = hs[j]
             segs[i] = torch.stack([h[s:e].mean(0) for s, e in spans]).half().cpu()
-            flags[i] = torch.tensor(ps.prefix_segment_flags(spans, pend))
+            flags[i] = torch.tensor(ps.suffix_segment_flags(spans, sstart) if suffix[i]
+                                    else ps.prefix_segment_flags(spans, pend))
             knn[i] = h[:length].mean(0).cpu()  # [CLS]·[SEP] 포함 평균 = EmbeddingModel.get_embedding
             seg_ids[i] = [torch.tensor(ids[s:e]) for s, e in spans]
     return segs, flags, F.normalize(torch.stack(knn), dim=-1), seg_ids
