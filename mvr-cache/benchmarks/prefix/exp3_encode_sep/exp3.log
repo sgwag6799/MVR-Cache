@@ -1,0 +1,9 @@
+[R / L0] 45s auc_sel=0.7335 auc_pairs=0.8256
+[variant L2] 373s freq boundary exact=1.000 under=0.000 over=0.000  M2_full=0.6131/0.7223  M4_full=0.6214/0.7556  M2_mask_oracle=0.6264/0.7903  M4_mask_oracle=0.7337/0.8234  M2_mask_freq=0.6264/0.7903  M4_mask_freq=0.7337/0.8234  M2_strip_freq=0.7336/0.8257
+[variant L4] 432s freq boundary exact=1.000 under=0.000 over=0.000  M2_full=0.6135/0.7211  M4_full=0.6634/0.7911  M2_mask_oracle=0.6045/0.7798  M4_mask_oracle=0.7394/0.8233  M2_mask_freq=0.6045/0.7798  M4_mask_freq=0.7394/0.8233  M2_strip_freq=0.7336/0.8257
+[variant L8] 555s freq boundary exact=1.000 under=0.000 over=0.000  M2_full=0.6165/0.6666  M4_full=0.6906/0.7764  M2_mask_oracle=0.6541/0.7951  M4_mask_oracle=0.7680/0.8423  M2_mask_freq=0.6541/0.7951  M4_mask_freq=0.7680/0.8423  M2_strip_freq=0.7336/0.8257
+[R / L0] 70s auc_sel=0.6970 auc_pairs=0.6134
+[variant L2] 492s freq boundary exact=0.000 under=0.000 over=1.000  M2_full=0.6387/0.5079  M4_full=0.6466/0.5173  M2_mask_oracle=0.6494/0.5376  M4_mask_oracle=0.6543/0.5456  M2_mask_freq=0.6768/0.6089  M4_mask_freq=0.7265/0.6674  M2_strip_freq=0.7156/0.6582
+[variant L4] 552s freq boundary exact=0.000 under=0.000 over=1.000  M2_full=0.6537/0.5051  M4_full=0.6617/0.5190  M2_mask_oracle=0.6399/0.5282  M4_mask_oracle=0.6417/0.5350  M2_mask_freq=0.6517/0.5920  M4_mask_freq=0.7207/0.6661  M2_strip_freq=0.7156/0.6582
+[variant L8] 672s freq boundary exact=0.000 under=0.000 over=1.000  M2_full=0.6241/0.4830  M4_full=0.6413/0.4969  M2_mask_oracle=0.6527/0.5369  M4_mask_oracle=0.6761/0.5699  M2_mask_freq=0.6564/0.5699  M4_mask_freq=0.7138/0.6557  M2_strip_freq=0.7156/0.6582
+RUN_DONE
