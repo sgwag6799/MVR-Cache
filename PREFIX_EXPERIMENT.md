@@ -474,3 +474,23 @@ python -m benchmarks.prefix.prefix_offline --data ../data/lmarena/prefix/data --
 python -m benchmarks.prefix.prefix_contamination --data ../data/lmarena/prefix/data --out ../data/lmarena/prefix/contamination_merged \
   --resp-col id_set_merged
 ```
+
+## 14. 실험 3: 인코딩 단계에서 공통 문단 분리 (설계 밖, 2026-10-28, 브랜치 `prefix-exp3-encode-separation`)
+
+**왜:** 10·11·13절에서 손실의 주원인은 문맥 오염이었다 (공통 문단을 앞에 두고 인코딩하면 원본 조각 벡터가 바뀜). 가중치는 같은 벡터 위에서만 움직이므로, 인코딩 자체를 바꿔 본다.
+
+### 14.1 설계 (실행 전 고정)
+
+스크립트: [`prefix_encode_sep.py`](mvr-cache/benchmarks/prefix/prefix_encode_sep.py). 단계 L의 프롬프트는 그대로 두고 인코딩 방식만 바꾼다. 점수는 M2(균등) · M4(공통 조각 0), 후보는 조건마다 자기 문장 벡터로 다시 검색, R = L0의 M2.
+
+| 조건 | 공통 문단 경계 | 인코딩 |
+|---|---|---|
+| `full` | 정답 경계 | 지금 방식 (= 1단계 M2 · M4) |
+| `mask_oracle` | 정답 경계 (`prefix_chars`) | 한 번의 forward, 블록 어텐션 마스크: `[CLS]` · 원본 · `[SEP]`은 공통 토큰을 못 봄 (공통 토큰은 다 봄). 위치 번호는 그대로. 문장 벡터는 `[CLS]` + 원본 + `[SEP]` 평균 |
+| `mask_freq` | **라벨 · 풀 파일 없이**: 단계의 train 프롬프트 1% 이상에 나오는 문장이 앞에서 이어지는 구간 (`. ! ?` + 공백으로 문장 분리) | 위와 같은 마스크 |
+| `strip_freq` | 위와 같은 빈도 경계 | 경계 뒤 텍스트만 따로 인코딩 (`strip_oracle`은 L0와 정확히 같으므로 생략) |
+
+- 데이터: Classification 공용 풀 · 8B 라벨 (8절과 같은 데이터), LmArena · 합친 정답 (13.4)
+- 지표: `auc_selected`, `auc_pairs`, `top1_acc`, `ceiling10`, R과의 차이 부트스트랩 1,000회. 빈도 경계가 정답 경계와 같은 비율
+- 마스크 동작 확인: 마스크를 켜면 공통 문장 표현만 바꿨을 때 원본 토큰 출력 cos 0.9995 (토큰 수 1개 차이로 위치가 밀린 몫), 끄면 0.954
+- 고정 방식은 행 집합이 L0와 달라 이번에는 제외
