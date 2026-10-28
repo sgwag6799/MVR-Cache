@@ -1,0 +1,28 @@
+{
+ "n": 1000,
+ "data": "../data/lmarena/prefix/data/variant/L8/test.parquet",
+ "gpu": "NVIDIA L4",
+ "models": {
+  "base": {
+   "path": "BAAI/bge-base-en-v1.5",
+   "p50_ms": 13.350701497984119,
+   "p95_ms": 14.218266249736189,
+   "mean_ms": 13.510857103039598,
+   "parameters": 109482240
+  },
+  "lora": {
+   "path": "../data/exp7/lora/model",
+   "p50_ms": 13.290491500811186,
+   "p95_ms": 13.739903349960514,
+   "mean_ms": 13.379244429968821,
+   "parameters": 109482240
+  },
+  "control": {
+   "path": "../data/exp7/control/model",
+   "p50_ms": 13.386805501795607,
+   "p95_ms": 13.922588798232027,
+   "mean_ms": 13.449199395934556,
+   "parameters": 109482240
+  }
+ }
+}

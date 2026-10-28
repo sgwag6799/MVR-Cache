@@ -1,0 +1,66 @@
+{
+ "args": {
+  "train": "../data/lmarena/train.parquet",
+  "val": "../data/lmarena/val.parquet",
+  "out": "../data/exp7/control",
+  "model": "BAAI/bge-base-en-v1.5",
+  "pool": "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_pool_train.json",
+  "eval_pool": "/root/MVR-Cache/mvr-cache/benchmarks/prefix/prefix_pool.json",
+  "device": "cuda",
+  "max_level": 8,
+  "keep_share": 0.25,
+  "suffix_share": 0.2,
+  "control": true,
+  "max_cuts": 32,
+  "lora_r": 16,
+  "lora_alpha": 32,
+  "lora_dropout": 0.1,
+  "lr": 0.0001,
+  "weight_decay": 0.01,
+  "warmup": 0.05,
+  "batch": 32,
+  "epochs": 5,
+  "patience": 2,
+  "seed": 0
+ },
+ "pool_check": {
+  "train_sentences": 60,
+  "eval_sentences": 40,
+  "max_cos_train_vs_eval": 0.8301758766174316,
+  "closest_pair": [
+   "A copy of this session may be reviewed later by members of the quality team.",
+   "This session is logged for quality checks by the team that runs the service."
+  ],
+  "mean_max_cos_train_vs_eval": 0.7033422589302063,
+  "mean_max_cos_eval_vs_eval": 0.8077057003974915
+ },
+ "train_rows": 3007,
+ "val_rows": 1000,
+ "trainable_parameters": 589824,
+ "selected_epoch": -1,
+ "log": [
+  {
+   "epoch": -1,
+   "val_inv": 0.0,
+   "val_keep": 1.111995500231444e-07
+  },
+  {
+   "epoch": 0,
+   "train_inv": 0.0,
+   "train_keep": 2.5917630158713044e-06,
+   "val_inv": 0.0,
+   "val_keep": 1.1477851327299504e-06,
+   "seconds": 30.03690004348755
+  },
+  {
+   "epoch": 1,
+   "train_inv": 0.0,
+   "train_keep": 7.287687712041008e-06,
+   "val_inv": 0.0,
+   "val_keep": 1.1366863508328607e-06,
+   "seconds": 30.213961124420166
+  }
+ ],
+ "git_commit": "0e38eecfb5c485d01b71987e84493b457ec0837f",
+ "gpu": "NVIDIA L4"
+}

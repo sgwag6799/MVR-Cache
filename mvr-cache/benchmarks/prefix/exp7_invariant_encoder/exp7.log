@@ -1,0 +1,46 @@
+## train lora
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (1058 > 512). Running this sequence through the model will result in indexing errors
+[pool] {"train_sentences": 60, "eval_sentences": 40, "max_cos_train_vs_eval": 0.8301758766174316, "closest_pair": ["A copy of this session may be reviewed later by members of the quality team.", "This session is logged for quality checks by the team that runs the service."], "mean_max_cos_train_vs_eval": 0.7033422589302063, "mean_max_cos_eval_vs_eval": 0.8077057003974915}
+[data] train 3007  val 1000
+[lora] trainable parameters 589824
+[epoch -1] val inv=0.15140 keep=0.00000
+[epoch 0] 36s train inv=0.06714 keep=0.00301 | val inv=0.04791 keep=0.00407
+[epoch 1] 36s train inv=0.03326 keep=0.00346 | val inv=0.03728 keep=0.00296
+[epoch 2] 36s train inv=0.02650 keep=0.00231 | val inv=0.03070 keep=0.00288
+[epoch 3] 36s train inv=0.02392 keep=0.00212 | val inv=0.02824 keep=0.00260
+[epoch 4] 36s train inv=0.02230 keep=0.00214 | val inv=0.02718 keep=0.00265
+-> ../data/exp7/lora/model (selected epoch 4)
+## train control
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (1058 > 512). Running this sequence through the model will result in indexing errors
+[pool] {"train_sentences": 60, "eval_sentences": 40, "max_cos_train_vs_eval": 0.8301758766174316, "closest_pair": ["A copy of this session may be reviewed later by members of the quality team.", "This session is logged for quality checks by the team that runs the service."], "mean_max_cos_train_vs_eval": 0.7033422589302063, "mean_max_cos_eval_vs_eval": 0.8077057003974915}
+[data] train 3007  val 1000
+[lora] trainable parameters 589824
+[epoch -1] val inv=0.00000 keep=0.00000
+[epoch 0] 30s train inv=0.00000 keep=0.00000 | val inv=0.00000 keep=0.00000
+[epoch 1] 30s train inv=0.00000 keep=0.00001 | val inv=0.00000 keep=0.00000
+-> ../data/exp7/control/model (selected epoch -1)
+## offline lora
+[variant L0] 62s  M1 auc_sel=0.7443  M2 auc_sel=0.7410  M3 auc_sel=0.7461  M4 auc_sel=0.7410
+[variant L4] 102s  M1 auc_sel=0.7391  M2 auc_sel=0.7375  M3 auc_sel=0.7274  M4 auc_sel=0.7426
+[variant L8] 148s  M1 auc_sel=0.7095  M2 auc_sel=0.7074  M3 auc_sel=0.6888  M4 auc_sel=0.7013
+## contamination lora
+[variant L4] 108s  aligned=1.000 cos=0.9801 overlap=0.863  M2_L=0.7375  ctx_L=0.7481  iso_L=0.7512  ctx_L0=0.7583  iso_L0=0.7410
+[variant L8] 153s  aligned=1.000 cos=0.9629 overlap=0.800  M2_L=0.7074  ctx_L=0.7031  iso_L=0.7424  ctx_L0=0.7215  iso_L0=0.7410
+## contamination suffix lora
+[variant L4] 107s  aligned=1.000 cos=0.9778 overlap=0.857  M2_L=0.6587  ctx_L=0.7145  iso_L=0.7454  ctx_L0=0.7116  iso_L0=0.7410
+[variant L8] 152s  aligned=1.000 cos=0.9727 overlap=0.845  M2_L=0.6704  ctx_L=0.7169  iso_L=0.7599  ctx_L0=0.7123  iso_L0=0.7410
+## offline control
+[variant L0] 61s  M1 auc_sel=0.7353  M2 auc_sel=0.7334  M3 auc_sel=0.7356  M4 auc_sel=0.7334
+[variant L4] 101s  M1 auc_sel=0.6186  M2 auc_sel=0.6117  M3 auc_sel=0.6640  M4 auc_sel=0.6635
+[variant L8] 148s  M1 auc_sel=0.6135  M2 auc_sel=0.6169  M3 auc_sel=0.6947  M4 auc_sel=0.6887
+## contamination control
+[variant L4] 108s  aligned=1.000 cos=0.9079 overlap=0.644  M2_L=0.6117  ctx_L=0.6606  iso_L=0.7718  ctx_L0=0.6151  iso_L0=0.7334
+[variant L8] 152s  aligned=1.000 cos=0.8438 overlap=0.554  M2_L=0.6169  ctx_L=0.6809  iso_L=0.8593  ctx_L0=0.6007  iso_L0=0.7334
+## contamination suffix control
+[variant L4] 107s  aligned=1.000 cos=0.9254 overlap=0.716  M2_L=0.5217  ctx_L=0.5535  iso_L=0.7341  ctx_L0=0.6080  iso_L0=0.7334
+[variant L8] 152s  aligned=1.000 cos=0.9090 overlap=0.698  M2_L=0.5329  ctx_L=0.5753  iso_L=0.7526  ctx_L0=0.5988  iso_L0=0.7334
+## latency
+[base] p50=13.35ms p95=14.22ms
+[lora] p50=13.29ms p95=13.74ms
+[control] p50=13.39ms p95=13.92ms
+RUN_DONE
