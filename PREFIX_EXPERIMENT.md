@@ -389,3 +389,19 @@ python -m benchmarks.prefix.prefix_within_task_gate --out benchmarks/prefix/exp1
   "과제별·8B=benchmarks/prefix/results_labels_tasks/prefix_task/offline_8b" \
   "과제별·70B=benchmarks/prefix/results_labels_tasks/prefix_task/offline_70b"
 ```
+
+## 13. 실험 2: 유사도가 정답을 결정하는 데이터 (SemBenchmarkLmArena, 브랜치 `prefix-exp2-lmarena`)
+
+**왜:** 12절에서 amazon(답 2개)·commonsense(답이 질문 내용에 달림)는 L0부터 `auc_selected` 0.52~0.60으로 신호가 거의 없어, 하락·회복률이 잡음에 묻혔다. 패러프레이즈 묶음(`ID_Set`)이 있는 단일 과제 데이터로 같은 1단계 진단을 다시 한다.
+
+### 13.1 사전 고정 (결과 보기 전, 이 커밋에서 고정)
+
+| 항목 | 내용 |
+|---|---|
+| 데이터 | `vCache/SemBenchmarkLmArena` 63,796행 · `ID_Set` 3,500개 (중앙값 20행/묶음) |
+| 분할 | [`scripts/make_lmarena_splits.py`](scripts/make_lmarena_splits.py): 묶음 단위로 `random.Random(42)` 순서대로 train ≥ 3,000 / val ≥ 1,000 / test ≥ 41,000행. 남는 묶음은 사용 안 함. 같은 묶음은 한 분할에만 있음 |
+| 정답 c | 같은 `ID_Set` (`--resp-col id_set_label`) |
+| 공통 문단 | 공용 `prefix_pool.json` (일반 어시스턴트 지시문이라 채팅 프롬프트에 자연스러움), 변형 L0·L2·L4·L8 + 고정 L4 |
+| 나머지 | 8절과 같은 설정: 분할 규칙, `fits_all_levels`, 앵커 6,000 × 최근접 10, M3 20 에폭, + M5·M6, `--save-scores`, 문맥 오염 2×2 |
+| 판정 | 8절과 같은 기준 (`auc_selected`, L ≥ 4에서 하락 ≥ 0.03 그리고 회복률 ≥ 0.5). 과제가 하나라 섞임 문제 없음 |
+| 보조 | `auc_pairs`, `top1_acc`, `ceiling10`, 부트스트랩 구간. 1등 후보 정답률이 매우 높으면(오답 1등 < 5%) `auc_selected`의 오답 표본이 적으므로 `auc_pairs`를 함께 해석 |
