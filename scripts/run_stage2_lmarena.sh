@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 실험 8: 2단계 41K 스트림 (LmArena, 합친 정답). 작업 목록을 받아 N개씩 병렬로 돌린다.
 # Usage: bash scripts/run_stage2_lmarena.sh <jobs.txt> <parallel>
-#   jobs.txt 한 줄 = "<이름> <단계 0|8> <시드> <조건 A..G, I>"
-#   I = 논문 MVR-Cache(F)에서 --mix-fullcos만 뺀 것 (SMaxSim만으로 판정, base 인코더)
+#   jobs.txt 한 줄 = "<이름> <단계 0|8> <시드> <조건 A..G, J>"
+#   J = 논문 MVR-Cache(F)에서 --mix-fullcos와 --include-full-embedding을 둘 다 뺀 것 (조각 벡터의 SMaxSim만, base 인코더)
 #   환경변수 (기본값 = 실험 8에서 쓴 값):
 #     SLEEP=0.02        요청마다 기다리는 시간(초). 주장 A 보강 실험은 0.1 (논문 README의 MVR-Cache 값)
 #     CAP_SCOPE=original 상한 32를 셀 범위. original = 공통 문장 목록으로 공통 문단 끝을 찾아 원본 부분에서만 셈,
@@ -32,6 +32,7 @@ run_one() {
   [ "$CAP_SCOPE" = "original" ] && pool="--prefix-pool benchmarks/prefix/prefix_pool.json"
   local rule="--splitter-mode prefix_rule --rule-max-cuts 32 --rule-cap-scope $CAP_SCOPE $pool --candidate-selection top_k --candidate-k 10 --use-cached-candidate-segments --splitter-device cuda --timing-output $OUT/$name.timing.txt"
   local paper="--splitter-mode rl --splitter-checkpoint $RLCKPT --candidate-selection multivector_top_k --candidate-k 10 --mix-fullcos --include-full-embedding --splitter-overlap-tokens 0 --splitter-device cuda --timing-output $OUT/$name.timing.txt"
+  local paper_seg=${paper/--mix-fullcos --include-full-embedding /}
   [ -f "$OUT/$name.json" ] && { echo "[skip] $name"; return 0; }
   local t0=$(date +%s) rc
   case $cond in
@@ -42,7 +43,7 @@ run_one() {
     E) python benchmarks/eval_sembenchmark_verified_splitter.py $common $rule --segment-head $HEAD ;;
     F) python benchmarks/eval_sembenchmark_verified_splitter.py $common $paper ;;
     G) BGE_MODEL_PATH=$LORA python benchmarks/eval_sembenchmark_verified_splitter.py $common $paper ;;
-    I) python benchmarks/eval_sembenchmark_verified_splitter.py $common ${paper/--mix-fullcos /} ;;
+    J) python benchmarks/eval_sembenchmark_verified_splitter.py $common $paper_seg ;;
   esac > "$OUT/$name.log" 2>&1
   rc=$?
   echo "[done] $name rc=$rc $(( $(date +%s) - t0 ))s"

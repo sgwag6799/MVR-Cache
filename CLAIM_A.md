@@ -33,12 +33,12 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 
 ## 보강 실험과 판정 기준
 
-논문 MVR-Cache 옵션: `--include-full-embedding`은 조각 벡터에 문장 전체 벡터 1개를 조각처럼 한 줄 더 붙이고, `--mix-fullcos`는 최종 점수를 0.5 × SMaxSim + 0.5 × 문장 전체 코사인으로 섞는다. 실험 8의 F는 둘 다 썼다. **조건 I = F에서 `--mix-fullcos`만 뺀 것**을 추가한다 (논문 본문 수치의 설정으로 보임, 확인 필요).
+논문 MVR-Cache 옵션: `--include-full-embedding`은 조각 벡터에 문장 전체 벡터 1개를 조각처럼 한 줄 더 붙이고, `--mix-fullcos`는 최종 점수를 0.5 × SMaxSim + 0.5 × 문장 전체 코사인으로 섞는다. 실험 8의 F는 README 예시대로 둘 다 썼다. **조건 J = F에서 두 옵션을 모두 뺀 것**(조각 벡터의 SMaxSim만, RL 분할기 · `multivector_top_k` k 10은 같음)을 추가한다. L8에서는 문장 전체 벡터의 약 3/4이 공통 문단이라, 두 옵션이 F에 불리하게 작용했는지 본다.
 
 | ID | 작업 목록 | 설정 | 내용 |
 |---|---|---|---|
-| A0 + 채우기 | `stage2_jobs_claimA_fill.txt` | 실험 8과 같음 (sleep 0.02) | 재현 확인(A · C · E · F, L8 시드 1) + **E의 L0** + **I** |
-| A1 | `stage2_jobs_claimA_sleep01.txt` | **sleep 0.1** | A · C · E · F · I, L8 시드 1 · 2 · 3 + L0 시드 1 |
+| A0 + 채우기 | `stage2_jobs_claimA_fill.txt` | 실험 8과 같음 (sleep 0.02) | 재현 확인(A · C · E · F, L8 시드 1) + **E의 L0** + **J** |
+| A1 | `stage2_jobs_claimA_sleep01.txt` | **sleep 0.1** | A · C · E · F · J, L8 시드 1 · 2 · 3 + L0 시드 1 |
 | A1b | `stage2_jobs_claimA_capall.txt` | sleep 0.1, **cap all** | C · E (공통 문장 목록 없이) |
 | A2 | – | A1과 같음 | Classification |
 | A3 | – | A1과 같음 | 처음 보는 템플릿 E′ |
@@ -61,7 +61,7 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 | `scripts/make_stage2_lmarena_data.py` | 스트림(L0 · L8 test) · RL 분할기 train/val 파일 |
 | `scripts/train_rl_splitter_lmarena.sh` | MVR-Cache 기준선 RL 분할기 학습 (논문 레시피) |
 | `mvr-cache/benchmarks/prefix/exp2_lmarena/offline_merged/prefix_w_variant_L8.pt` | E의 M3 가중치 헤드 (LmArena L8 train으로 학습) |
-| `scripts/run_stage2_lmarena.sh` · `scripts/stage2_jobs_*.txt` | 스트림 실행 (조건 A~G · I, `SLEEP` · `CAP_SCOPE` · `HEAD` · `OUT` 환경변수) |
+| `scripts/run_stage2_lmarena.sh` · `scripts/stage2_jobs_*.txt` | 스트림 실행 (조건 A~G · J, `SLEEP` · `CAP_SCOPE` · `HEAD` · `OUT` 환경변수) |
 | `scripts/run_claimA_stage2.sh` · `scripts/autosave_stage2.sh` | 보강 배치를 순서대로 실행 · 결과 자동 push |
 | `mvr-cache/benchmarks/prefix/prefix_stage2_report.py` | 히트율 · 오류율 집계 |
 | `mvr-cache/vcache/vcache_core/splitter/PrefixRuleSplitter.py` | 규칙 분할기 + M3 헤드 |
