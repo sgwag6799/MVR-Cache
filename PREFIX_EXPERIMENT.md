@@ -848,17 +848,31 @@ L4도 방향이 같다 (LmArena 뒤: 회복률 0.20 / 0.15, Classification 뒤: 
 | 정답 | LmArena는 `id_set_merged`(13.3)로 사전 고정 |
 | M3 일반화 | 처음 보는 템플릿 조건 추가: 헤드를 `prefix_pool_train.json`(19절, 평가 풀과 겹치는 문장 0개)이 붙은 train으로 학습, `prefix_pool.json`으로 평가 |
 
+**논문 MVR-Cache의 두 옵션과 조건 I**
+
+| 옵션 | 동작 |
+|---|---|
+| `--include-full-embedding` | 조각 벡터들에 **문장 전체 벡터 1개**(`[CLS]`를 뺀 모든 토큰 평균)를 조각 하나처럼 한 줄 더 붙인다. SMaxSim에서 이 줄도 짝 후보가 된다 |
+| `--mix-fullcos` | 최종 점수 = 0.5 × SMaxSim + 0.5 × 문장 전체 벡터 코사인 (둘 다 [0, 1]로 바꾼 뒤). 빼면 SMaxSim만 쓴다 |
+
+- 실험 8의 F는 README 예시대로 두 옵션을 모두 썼다. 논문 본문 수치는 `--mix-fullcos` 없이 잰 것으로 보여(논문 확인 필요), **조건 I = F에서 `--mix-fullcos`만 뺀 것**(base 인코더, `--include-full-embedding`은 유지)을 추가한다.
+
 `scripts/run_stage2_lmarena.sh`는 `SLEEP` · `CAP_SCOPE` 환경변수를 받는다. 기본값은 실험 8에서 쓴 값(0.02, original)이라 20절 결과를 그대로 재현한다.
 
 ### 21.5 보강 실험 계획 (실행 전에 이 설계를 커밋으로 고정)
 
-| ID | 내용 | 약점 |
-|---|---|---|
-| A0 | 실험 8 재현: 기본 설정(0.02, original)으로 LmArena L8 시드 1의 A · C · E · F가 21.2와 ±0.2%p 안에서 일치 | 출처 |
-| A1 | 21.4 설정(0.1, all)으로 LmArena L0 · L8, A · C · E · F, 시드 1 · 2 · 3 | 2 · 5 · 7 |
-| A2 | 같은 설정으로 Classification(cls_seed42, `fits_all_levels`) L0 · L8 | 3 |
-| A3 | 처음 보는 템플릿: 헤드를 학습용 풀로 학습한 E′를 A1 · A2 스트림에 추가 | 6 |
-| A4 | 참고: vCache + LoRA 인코더(B)를 같은 표에 함께 보고 | 리뷰어 질문 |
+| ID | 작업 목록 | 설정 | 실행 | 약점 |
+|---|---|---|---|---|
+| A0 + 채우기 | `scripts/stage2_jobs_claimA_fill.txt` | 실험 8과 같음 (`SLEEP=0.02`, `CAP_SCOPE=original`) | 실험 8 재현 확인(A · C · E · F, L8 시드 1, 21.2와 ±0.2%p) + **E의 L0** + **I** (L8 시드 1 · 2 · 3, L0 시드 1). 9개 | 출처 · 2 · I |
+| A1 | `scripts/stage2_jobs_claimA_sleep01.txt` | **`SLEEP=0.1`**, `CAP_SCOPE=original` | A · C · E · F · I × (L8 시드 1 · 2 · 3, L0 시드 1). 20개 | 7 |
+| A1b | `scripts/stage2_jobs_claimA_capall.txt` | `SLEEP=0.1`, **`CAP_SCOPE=all`** | 규칙 분할만 쓰는 C · E × (L8 시드 1 · 2 · 3, L0 시드 1). 8개. A1과 비교해 공통 문장 목록의 영향만 분리 | 5 |
+| A2 | (데이터 준비 후 작성) | A1 · A1b와 같음 | Classification(cls_seed42, `fits_all_levels`) L0 · L8 | 3 |
+| A3 | (헤드 학습 후 작성) | A1과 같음 | 처음 보는 템플릿: 헤드를 학습용 풀로 학습한 E′ | 6 |
+| A4 | – | – | 참고: vCache + LoRA 인코더(B)를 같은 표에 함께 보고 | 리뷰어 질문 |
+
+- E는 모든 단계에서 **L8 헤드 하나**(`exp2_lmarena/offline_merged/prefix_w_variant_L8.pt`)를 쓴다. 실제 서비스는 요청에 공통 문단이 몇 개 붙었는지 모르므로, L0에서도 같은 헤드로 손해가 없는지 본다 (약점 2). 단계별 헤드는 `HEAD=` 환경변수로 바꿀 수 있다.
+- 설정이 다른 실행은 결과 폴더(`OUT`)를 나눈다 (실행 스크립트가 같은 이름의 결과가 있으면 건너뛰므로).
+- 예상 시간 (L4, 병렬 4~5개, 실험 8의 요청당 시간 vCache 51 ms · 규칙 MVR 90 ms · MVR-Cache 130 ms에 sleep 차이 0.08초를 더해 추정): A0 + 채우기 약 1.5시간, A1 약 8시간, A1b 약 3시간. Colab 런타임 최대 시간(약 24시간) 안에 들도록 나눠 돌리고, `scripts/autosave_stage2.sh`로 결과를 중간중간 push한다.
 
 **판정 기준 (주장 A 성립 조건, 데이터마다)**
 
@@ -882,10 +896,11 @@ python scripts/lmarena_merge_duplicate_sets.py --raw data/raw_lmarena/train.parq
 # 실험 8 입력 (stream L0 · L8 각 40,964행, rl train 3,007 / val 1,000)
 python scripts/make_stage2_lmarena_data.py
 bash scripts/train_rl_splitter_lmarena.sh                    # MVR-Cache 기준선 분할기 → data/exp8/rl/best.ckpt
-# 실험 8 그대로 (A · C · E는 batch1, F는 batch2에 있음. B · D · G는 data/exp7/lora/model 필요)
-bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch1.txt 5
-bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch2.txt 4
-# 보강 실험 설정
-SLEEP=0.1 CAP_SCOPE=all OUT=data/claimA/runs bash scripts/run_stage2_lmarena.sh <jobs.txt> 4
-(cd mvr-cache && python -m benchmarks.prefix.prefix_stage2_report --runs ../data/exp8/runs --out ../data/exp8/report)
+# 실험 8 전체 (B · D · G는 data/exp7/lora/model 필요)
+#   bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch1.txt 5; bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch2.txt 4
+# 주장 A 보강: A0 + 채우기 → A1 → A1b를 하나씩 순서대로, 배치마다 결과 폴더를 나누고 autosave가 push (VSCode 터미널에서)
+mkdir -p data/claimA
+nohup bash scripts/run_claimA_stage2.sh 5 > data/claimA/run.log 2>&1 < /dev/null &
+#   중간에 끊기면 남은 배치부터: nohup bash scripts/run_claimA_stage2.sh 5 sleep01 > data/claimA/run.log 2>&1 < /dev/null &
+#   집계 결과: mvr-cache/benchmarks/prefix/claimA_stage2/{fill,sleep01,capall}/stage2_summary.csv
 ```

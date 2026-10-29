@@ -51,7 +51,7 @@ def main() -> None:
 
     rows = []
     for f in sorted(glob.glob(os.path.join(args.runs, "*.json"))):
-        m = re.match(r"([A-G])_L(\d+)_s(\d+)\.json$", os.path.basename(f))
+        m = re.match(r"([A-I])_L(\d+)_s(\d+)\.json$", os.path.basename(f))
         if not m:
             continue
         rows.append({"cond": m[1], "level": int(m[2]), "seed": int(m[3]), **summarise(f, args.warmup)})
