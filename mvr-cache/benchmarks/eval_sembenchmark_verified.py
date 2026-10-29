@@ -784,7 +784,7 @@ def main() -> None:
 
         bench_path = os.path.join(bench_dir, f"results_{benchmark_timestamp}.json")
         with open(bench_path, "w") as f:
-            json.dump(bench_data, f, indent=4)
+            json.dump(bench_data, f, indent=4, default=float)  # [수정: 실험 8] numpy float32 직렬화
         print(f"Benchmark-format results saved to {bench_path}")
 
         statistics_path = os.path.join(bench_dir, f"statistics_{benchmark_timestamp}.json")
@@ -799,7 +799,7 @@ def main() -> None:
             latency_vectorq_list=latency_vectorq_list,
         )
         with open(statistics_path, "w") as f:
-            json.dump(statistics_data, f, indent=4)
+            json.dump(statistics_data, f, indent=4, default=float)
         print(f"Benchmark-format statistics saved to {statistics_path}")
 
         aggregate_runs.append(

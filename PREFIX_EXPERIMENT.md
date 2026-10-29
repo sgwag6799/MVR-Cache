@@ -725,3 +725,167 @@ L4도 방향이 같다 (LmArena 뒤: 회복률 0.20 / 0.15, Classification 뒤: 
 - 데이터 1개 (LmArena, 정답은 결과 본 뒤 합친 묶음), 시드 1개.
 - 대조군이 base와 같아져 "학습 자체의 효과"를 분리하지 못했다. 공통 문장 대신 무관한 문장을 붙이되 불변성 손실 없이 학습하는 등의 대조군이 필요하다.
 - Classification · 다른 인코더에서의 재현, 2단계 41K 스트림 검증은 하지 않았다.
+
+## 20. 실험 8: 2단계 41K 스트림 — 히트율 (설계 밖, 2026-10-28, 브랜치 `prefix-exp8-stage2-hitrate`)
+
+**왜:** 1단계 지표(AUC)는 진단용이고, 최종 결과는 실제 캐시의 **히트율 · 오류율**이다. 실험 7의 LoRA 인코더가 히트율을 올리는지, 논문의 MVR-Cache(RL 분할기)를 포함한 비교군과 함께 잰다. **이 설계와 판정 기준은 실행 전에 이 커밋으로 고정한다.**
+
+### 20.1 설계 (실행 전 고정)
+
+| 항목 | 내용 |
+|---|---|
+| 데이터 | LmArena test 40,964행 (`fits_all_levels`). 순서 그대로 (같은 묶음이 연달아 나오는 비율 0.07% ≈ 무작위 0.05%) |
+| 단계 | **L8** (공용 풀 공통 문장 8개, 앞에 붙임, 주 비교) · **L0** (원본, 기준) |
+| 정답 | 같은 `id_set` = 13.3의 합친 묶음 (`id_set_merged`). `--similarity-evaluator benchmark_id_set` |
+| 캐시 판정 | vCache verified 정책, δ = 0.01, `--sleep 0.02`, 시드 1 · 2 · 3 (L0은 시드 1) |
+| 집계 | 앞 2,000행 제외 (캐시가 차는 구간) → 38,964행. 히트율 = 재사용 / 요청, 오류율 = 틀린 재사용 / 요청 |
+
+**조건 (같은 캐시 정책 안에서 인코더만 바꿈)**
+
+| 조건 | 캐시 정책 | 인코더 |
+|---|---|---|
+| A / B | vCache (문장 벡터 1개, 논문 기준선) | base / **LoRA** |
+| C / D | MVR, 규칙 분할 (`. , ! ? ; :`, 상한 32) + 균등 가중치, 후보 10개 재순위 | base / **LoRA** |
+| E | MVR, 규칙 분할 + 학습 가중치 (M3, 13.4의 L8 헤드) — 원래 제안 | base |
+| F / G | **MVR-Cache (논문)**: RL 분할기 + `multivector_top_k` k 10 + `--mix-fullcos --include-full-embedding` | base / **LoRA** |
+
+- RL 분할기: 논문 레시피 그대로 (`RL4COTrainer.py`, `--label_mode id_set --train_sampling_mode anchor_nn --policy_mode separate --punctuation_only --bce_auto_balance`, 배치 8, lr 1e-4, 최대 200 에폭, 5 에폭마다 val, 조기 종료). **LmArena train 3,007행 · 원본 프롬프트(L0)로 학습, val로 선택, test 미사용.** 논문 체크포인트(SearchQueries 10K)는 이 VM에 없어 새로 학습했다. val reward가 가장 높은 체크포인트를 쓴다. 분할기는 base 인코더로 학습했으므로 G(LoRA)에서는 분할기와 인코더가 어긋날 수 있다.
+- 인코더 교체: `BGE_MODEL_PATH` 환경변수 (평가 코드 수정 없음). LoRA = 19절 합친 모델
+- 논문과 다른 점: 논문은 MVR-Cache에 `--sleep 0.1`을 썼다. 여기서는 실행 시간 때문에 **모든 조건을 0.02로 같게** 했다.
+
+### 20.2 판정 기준 (실행 전 고정)
+
+1. **L8에서 LoRA의 히트율이 base보다 높다**: vCache(B > A), MVR 규칙(D > C), MVR-Cache 논문(G > F) 각각, **시드 3개 모두**에서
+2. 그때 LoRA의 오류율이 δ(0.01)를 넘지 않는다 (모든 시드)
+3. L0에서 LoRA의 히트율이 base보다 **0.5%p 넘게 낮지 않다**
+- 보조: 히트율 회복률 (H_L8,LoRA − H_L8,base) / (H_L0,base − H_L8,base), 정책 간 비교 (A · C · E · F), 요청당 지연
+
+### 20.3 부수 수정
+
+- `eval_sembenchmark_verified.py`: 결과 JSON은 저장되지만 벤치마크 로그 저장에서 numpy float32 직렬화 오류 → `default=float`
+- `prefix_invariance_train.py`: 학습 전이 가장 좋을 때 마지막 에폭 가중치가 저장되던 버그 수정 (19.3 대조군이 base와 최대 0.00085 달랐던 원인). 19절 결과는 다시 돌리지 않음
+
+### 20.4 결과 (2026-10-28)
+
+집계: `python -m benchmarks.prefix.prefix_stage2_report --runs ../data/exp8/runs --out ../data/exp8/report` → `benchmarks/prefix/exp8_stage2/`. 앞 2,000행 제외 38,964행. 히트율 = (tp + fp) / n, 오류율 = fp / n. 시드 간 표준편차는 히트율 0.1%p 안팎.
+
+**히트율 (오류율), L8은 시드 3개 평균 · L0은 시드 1**
+
+| 조건 | L0 | L8 | L8 − L0 |
+|---|---|---|---|
+| A vCache + base | 21.74% (0.07%) | 17.54% (0.18%) | −4.20%p |
+| B vCache + **LoRA** | 21.67% (0.05%) | **20.71%** (0.05%) | −0.96%p |
+| C MVR 규칙 균등 + base | 20.67% (0.09%) | 18.59% (0.18%) | −2.08%p |
+| D MVR 규칙 균등 + **LoRA** | 20.45% (0.09%) | **20.25%** (0.09%) | −0.20%p |
+| E MVR 규칙 + 학습 가중치(M3) + base | — | 20.19% (0.18%) | — |
+| F MVR-Cache 논문 (RL) + base | 20.24% (0.08%) | 18.54% (0.23%) | −1.70%p |
+| G MVR-Cache 논문 (RL) + **LoRA** | 20.04% (0.07%) | 18.68% (0.24%) | −1.36%p |
+
+**판정 (20.2)**
+
+| 기준 | vCache (B vs A) | MVR 규칙 (D vs C) | MVR-Cache 논문 (G vs F) |
+|---|---|---|---|
+| 1. L8에서 LoRA > base, 시드 3개 모두 | **통과** (+3.17 / +3.14 / +3.20%p) | **통과** (+1.55 / +1.85 / +1.59%p) | **불통과** (+0.25 / **−0.07** / +0.23%p) |
+| 2. LoRA 오류율 ≤ δ (모든 시드) | **통과** (최대 0.07%) | **통과** (최대 0.11%) | 통과 (최대 0.26%) |
+| 3. L0에서 LoRA가 0.5%p 넘게 낮지 않음 | **통과** (−0.08%p) | **통과** (−0.22%p) | 통과 (−0.20%p) |
+| 보조: 히트율 회복률 | **0.75** | **0.80** | 0.08 |
+
+
+**해석**
+
+- **LoRA 인코더는 히트율에서도 효과가 있다.** vCache는 공통문단 8개로 잃은 히트율 4.20%p 중 3.17%p를 되찾아(회복률 0.75) L8에서 20.71%가 됐고, 규칙 MVR도 0.80을 되찾았다. 오류율은 오히려 낮아졌다 (vCache 0.18% → 0.05%). 원본(L0)에서는 거의 그대로다 (−0.08%p, −0.22%p). 1단계 오프라인 결과(19절)가 실제 캐시에서도 재현됐다.
+- **논문 MVR-Cache(RL 분할기)에서는 LoRA 효과가 거의 없다** (+0.14%p, 시드 하나는 음수 → 기준 1 불통과). 미리 적은 한계대로, 분할기를 base 인코더로 학습해 LoRA 인코더와 어긋난 것이 가장 그럴듯한 이유다. 또 이 분할기는 프롬프트당 분할 최대 4개(`max_segments=4`)이고 val reward가 첫 체크(에폭 4, −0.019) 뒤로 좋아지지 않았다 (에폭 9 −0.070, 14 −0.035, 이후 19 · 24 · 29도 개선 없음 → 에폭 29에서 조기 종료. F · G에 쓴 에폭 4가 최종 선택 체크포인트와 같다). LmArena에서 RL 분할기가 잘 학습되지 않았을 수 있다.
+- **정책 간 비교 (L8, base):** vCache 17.54% < F 논문 MVR-Cache 18.54% ≈ C 규칙 MVR 18.59% < E 규칙 + 학습 가중치 20.19%. 공통문단에는 MVR 계열이 vCache보다 강하고, 학습 가중치(M3)가 가장 좋다 (1단계 15절의 M3 결과와 같은 방향). 반대로 L0에서는 vCache가 가장 높다 (21.74% vs 20.24 ~ 20.67%).
+- **가장 높은 L8 히트율은 vCache + LoRA (20.71%)** 로, 원본 vCache(21.74%)에 1%p 차이까지 왔다. 오류율도 가장 낮다.
+- **요청당 시간** (병렬 4 ~ 5개 실행 · `--sleep 0.02` 포함이라 상대 비교만): vCache ≈ 51 ms, 규칙 MVR ≈ 90 ms (L0 67 ms), 논문 MVR-Cache ≈ 130 ms (RL 분할기 추론이 큼). LoRA는 시간 차이가 없다 (19절의 인코더 지연 p50 13.3 ms와 같음).
+
+**한계**
+
+- 데이터셋 하나(LmArena), 공통문단 위치는 앞, 단계는 L0 · L8만. L0은 시드 1개.
+- RL 분할기는 논문 체크포인트가 아니라 여기서 새로 학습한 것 (val 기준 에폭 4). 논문 수치와 직접 비교하면 안 된다.
+- `--sleep 0.02` (논문 MVR-Cache는 0.1).
+
+## 21. 주장 A: 공통 문단 환경에서 규칙 분할 + 학습 가중치가 vCache · MVR-Cache보다 낫다 (브랜치 `claim-a-rule-weighting`)
+
+정리 문서: [`CLAIM_A.md`](CLAIM_A.md). 이 절은 근거 · 약점 · 정한 것 · 보강 계획을 기록한다.
+
+### 21.1 이 브랜치의 출처
+
+- 실험 7 브랜치(`prefix-exp7-invariant-encoder`, `a8c9d57`) 위에 실험 8을 다시 올렸다. 실험 8 원래 커밋(`ef25c23` 설계, `6f8f966` 결과 등)은 Colab VM에서 push되지 않은 채 VM과 함께 사라졌다.
+- 코드 · 실행 스크립트 · 20절 문서는 VM 세션 기록에 남은 명령 · 파일 내용에서 그대로 복원했다. 데이터 준비 · RL 학습은 원래 인라인 명령이라 같은 내용으로 스크립트로 옮겼다 (`scripts/make_stage2_lmarena_data.py`, `scripts/train_rl_splitter_lmarena.sh`).
+- 결과 [`exp8_stage2/stage2_runs.csv`](mvr-cache/benchmarks/prefix/exp8_stage2/stage2_runs.csv)는 VM에서 `prefix_stage2_report.py`가 출력한 실행별 표(소수 6자리)에서 복원했다. 실행별 원본 JSON · timing · RL 학습 로그 · RL 체크포인트 · LoRA 모델은 없다.
+
+### 21.2 근거 (실험 8, base 인코더, LmArena L8, 앞 2,000행 제외 38,964요청)
+
+| 시드 | 우리 방식 E | vCache A | 논문 MVR-Cache F | 규칙 균등 C | E − A | E − F | E − C |
+|---|---|---|---|---|---|---|---|
+| 1 | 20.32% | 17.64% | 18.57% | 18.77% | +2.68%p | +1.75%p | +1.55%p |
+| 2 | 20.00% | 17.47% | 18.52% | 18.43% | +2.53%p | +1.48%p | +1.57%p |
+| 3 | 20.25% | 17.52% | 18.54% | 18.56% | +2.73%p | +1.70%p | +1.69%p |
+| 평균 | **20.19%** | 17.54% | 18.54% | 18.59% | **+2.65%p** | **+1.65%p** | **+1.60%p** |
+
+- E 오류율 최대 0.20% (δ = 1% 이내). 세 비교 모두 시드 3개에서 같은 방향.
+- 1단계 오프라인도 같은 방향: L8 `auc_selected` LmArena M1 0.617 · M2 0.616 · **M3 0.694** · M4 0.691 (13.4 · 19.3의 base), Classification 4개 풀 × 라벨 조합 모두 M3 > M4 > M2 (8 · 11절).
+
+### 21.3 약점
+
+1. **사전 기준 미달 · 보조 분석**: 1단계 사전 고정 기준은 미달(8절)이라 설계 규칙상 2단계가 없다. 실험 8은 결과 본 뒤 설계했고, 사전 기준은 LoRA vs base였다. E vs A · F는 보조 분석(정책 간 비교)이다. 데이터(LmArena)와 정답 정의(`id_set_merged`, 13.3)도 결과를 본 뒤 정했다.
+2. **E의 L0 없음**: L0에서는 vCache 21.74% > 규칙 균등 20.67% > MVR-Cache 20.24%. M3 헤드는 단계별로 따로 학습했고(E는 L8 헤드), 공통 문단 수를 모르는 섞인 스트림에서 헤드 하나로 되는지 확인하지 않았다.
+3. **데이터셋 1개**: LmArena, 공통 문장 풀 1개(어시스턴트 지시문), 앞에만, L0 · L8.
+4. **RL 분할기 재학습**: 논문 체크포인트(SearchQueries 10K)가 공개되지 않아 LmArena train으로 논문 레시피 그대로 학습. val reward가 첫 검증(에폭 4) 뒤로 좋아지지 않았고, 프롬프트당 조각 최대 4개.
+5. **공통 문단 정보 사용**: 규칙 분할의 상한 32를 `cap_scope original`로 적용하려고 공통 문장 목록(`--prefix-pool`)으로 공통 문단 끝을 찾았다. 실제 서비스에서는 쓸 수 없는 정보다. 가중치(M3)는 이 정보를 쓰지 않는다.
+6. **같은 공통 문장으로 학습 · 평가**: M3 헤드는 test와 같은 공통 문장 40개(`prefix_pool.json`)가 붙은 train으로 학습했다. 처음 보는 템플릿에서 되는지는 확인하지 않았다.
+7. **`--sleep 0.02`**: 논문 README는 MVR-Cache에 0.1. sleep이 짧으면 백그라운드 관측 갱신이 덜 끝나 탐색(LLM 호출)이 늘고, 갱신이 무거운 MVR 계열이 더 불리할 수 있다.
+
+### 21.4 정한 것
+
+| 항목 | 결정 |
+|---|---|
+| MVR-Cache 기준선 | 논문 체크포인트가 공개되지 않았으므로 **여기서 학습한 RL 분할기**(논문 레시피 그대로)를 기준선으로 쓴다. 학습 곡선과 조각 수 분포를 함께 보고한다 |
+| `--sleep` | **모든 조건 0.1** (`SLEEP=0.1`). 조건마다 기다리는 시간을 같게 |
+| δ (`--delta`) | 0.01 (논문 본문과 같음) |
+| 상한 32 | **`cap_scope all`** (`CAP_SCOPE=all`): 공통 문장 목록을 쓰지 않고 맨 앞부터 셈 |
+| 정답 | LmArena는 `id_set_merged`(13.3)로 사전 고정 |
+| M3 일반화 | 처음 보는 템플릿 조건 추가: 헤드를 `prefix_pool_train.json`(19절, 평가 풀과 겹치는 문장 0개)이 붙은 train으로 학습, `prefix_pool.json`으로 평가 |
+
+`scripts/run_stage2_lmarena.sh`는 `SLEEP` · `CAP_SCOPE` 환경변수를 받는다. 기본값은 실험 8에서 쓴 값(0.02, original)이라 20절 결과를 그대로 재현한다.
+
+### 21.5 보강 실험 계획 (실행 전에 이 설계를 커밋으로 고정)
+
+| ID | 내용 | 약점 |
+|---|---|---|
+| A0 | 실험 8 재현: 기본 설정(0.02, original)으로 LmArena L8 시드 1의 A · C · E · F가 21.2와 ±0.2%p 안에서 일치 | 출처 |
+| A1 | 21.4 설정(0.1, all)으로 LmArena L0 · L8, A · C · E · F, 시드 1 · 2 · 3 | 2 · 5 · 7 |
+| A2 | 같은 설정으로 Classification(cls_seed42, `fits_all_levels`) L0 · L8 | 3 |
+| A3 | 처음 보는 템플릿: 헤드를 학습용 풀로 학습한 E′를 A1 · A2 스트림에 추가 | 6 |
+| A4 | 참고: vCache + LoRA 인코더(B)를 같은 표에 함께 보고 | 리뷰어 질문 |
+
+**판정 기준 (주장 A 성립 조건, 데이터마다)**
+
+1. L8에서 E의 히트율이 A(vCache)와 F(MVR-Cache 기준선)보다 시드 3개 모두 높음
+2. E 오류율 ≤ δ, 모든 단계 · 시드
+3. L0에서 E 히트율이 C(규칙 균등)보다 0.5%p 넘게 낮지 않음 (L0에서 A와의 차이는 그대로 보고)
+- 보조: E − C, E′ − E (처음 보는 템플릿에서 잃는 몫), 요청당 시간, B와의 차이
+
+### 21.6 재현
+
+```bash
+# 런타임마다 (7.1절과 같음)
+git clone -b claim-a-rule-weighting https://github.com/sgwag6799/MVR-Cache.git /root/MVR-Cache
+cd /root/MVR-Cache && source colab_setup.sh
+# LmArena 데이터 (13절): 분할 지문 train ec6e778ee76f / val 411c8e1b6412 / test 3e5cc1fe8fa8
+python -c "from huggingface_hub import hf_hub_download as d; d('vCache/SemBenchmarkLmArena','train.parquet',repo_type='dataset',local_dir='data/raw_lmarena')"
+python scripts/make_lmarena_splits.py --raw data/raw_lmarena/train.parquet --out data/lmarena
+(cd mvr-cache && python -m benchmarks.prefix.make_prefix_data --train ../data/lmarena/train.parquet \
+  --val ../data/lmarena/val.parquet --test ../data/lmarena/test.parquet --out ../data/lmarena/prefix/data)
+python scripts/lmarena_merge_duplicate_sets.py --raw data/raw_lmarena/train.parquet --data data/lmarena/prefix/data
+# 실험 8 입력 (stream L0 · L8 각 40,964행, rl train 3,007 / val 1,000)
+python scripts/make_stage2_lmarena_data.py
+bash scripts/train_rl_splitter_lmarena.sh                    # MVR-Cache 기준선 분할기 → data/exp8/rl/best.ckpt
+# 실험 8 그대로 (A · C · E는 batch1, F는 batch2에 있음. B · D · G는 data/exp7/lora/model 필요)
+bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch1.txt 5
+bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_batch2.txt 4
+# 보강 실험 설정
+SLEEP=0.1 CAP_SCOPE=all OUT=data/claimA/runs bash scripts/run_stage2_lmarena.sh <jobs.txt> 4
+(cd mvr-cache && python -m benchmarks.prefix.prefix_stage2_report --runs ../data/exp8/runs --out ../data/exp8/report)
+```

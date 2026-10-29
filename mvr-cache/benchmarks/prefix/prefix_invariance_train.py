@@ -253,7 +253,9 @@ def main() -> None:
     v_inv0, v_keep0 = evaluate()
     log = [{"epoch": -1, "val_inv": v_inv0, "val_keep": v_keep0}]
     print(f"[epoch -1] val inv={v_inv0:.5f} keep={v_keep0:.5f}")
-    best = {"epoch": -1, "score": v_inv0 + v_keep0, "state": None}
+    # 학습 전 LoRA(= 0, 원래 모델과 같음)도 후보로 둔다: 학습 전이 가장 좋으면 그 상태를 저장 (실험 7 대조군에서 마지막 에폭이 저장되던 문제 수정)
+    best = {"epoch": -1, "score": v_inv0 + v_keep0,
+            "state": {k: v.detach().clone() for k, v in student.state_dict().items() if "lora_" in k}}
     rng = random.Random(args.seed)
     student.train()
     for ep in range(args.epochs):
@@ -286,8 +288,7 @@ def main() -> None:
         elif ep - best["epoch"] >= args.patience:
             break
 
-    if best["state"] is not None:
-        student.load_state_dict(best["state"], strict=False)
+    student.load_state_dict(best["state"], strict=False)
     merged = student.merge_and_unload()
     merged.save_pretrained(os.path.join(args.out, "model"))
     tok.save_pretrained(os.path.join(args.out, "model"))
