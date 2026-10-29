@@ -3,7 +3,7 @@
 > 프롬프트 앞에 답과 무관한 공통 문단이 붙는 환경에서, **규칙 분할(구두점 위치, 상한 32) + 학습 가중치(M3)** 를 쓰는 MVR이 단일 벡터 vCache와 논문 MVR-Cache(RL 분할기)보다 **오류율 한도(δ = 0.01)를 지키면서 더 높은 히트율**을 낸다.
 
 - 인코더: 모든 비교는 base 인코더 `BAAI/bge-base-en-v1.5` 기준
-- 상세 기록: [`PREFIX_EXPERIMENT.md`](PREFIX_EXPERIMENT.md), 설계 원문 [`PREFIX_PLAN.md`](PREFIX_PLAN.md)
+- 데이터셋 (공통 문단 붙이는 방식): [`PREFIX_EXPERIMENT.md`](PREFIX_EXPERIMENT.md), 설계 원문 [`PREFIX_PLAN.md`](PREFIX_PLAN.md)
 - 결과 파일: [`mvr-cache/benchmarks/prefix/exp8_stage2/`](mvr-cache/benchmarks/prefix/exp8_stage2/)
 
 ## 근거: 실험 8 (LmArena 41K 스트림, 공통 문장 8개 L8)
@@ -66,4 +66,4 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 | `mvr-cache/benchmarks/prefix/prefix_stage2_report.py` | 히트율 · 오류율 집계 |
 | `mvr-cache/vcache/vcache_core/splitter/PrefixRuleSplitter.py` | 규칙 분할기 + M3 헤드 |
 
-데이터 파일(`data/`)은 git에서 제외되어 있다. 위 스크립트로 Hugging Face 원본(`vCache/SemBenchmarkLmArena`)에서 같은 파일을 다시 만든다. 재현 명령은 `PREFIX_EXPERIMENT.md` 8절.
+데이터 파일(`data/`)은 git에서 제외되어 있다. 위 스크립트로 Hugging Face 원본(`vCache/SemBenchmarkLmArena`)에서 같은 파일을 다시 만든다. 데이터 만드는 방법은 [`PREFIX_EXPERIMENT.md`](PREFIX_EXPERIMENT.md), 실험 실행은 `scripts/run_claimA_stage2.sh`.

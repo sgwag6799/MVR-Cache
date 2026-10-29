@@ -1,6 +1,6 @@
 # 실험 8 결과 (2단계 41K 스트림, LmArena)
 
-설정 · 결과 · 판정: [`PREFIX_EXPERIMENT.md`](../../../../PREFIX_EXPERIMENT.md) 2 · 3절, 요약: [`CLAIM_A.md`](../../../../CLAIM_A.md).
+설계 · 결과 · 판정: [`CLAIM_A.md`](../../../../CLAIM_A.md).
 
 | 파일 | 내용 |
 |---|---|
