@@ -1,6 +1,6 @@
 # 실험 8 결과 (2단계 41K 스트림, LmArena)
 
-설계 · 판정 · 해석: [`PREFIX_EXPERIMENT.md`](../../../../PREFIX_EXPERIMENT.md) 20절, 주장 A 정리: 21절 · [`CLAIM_A.md`](../../../../CLAIM_A.md).
+설정 · 결과 · 판정: [`PREFIX_EXPERIMENT.md`](../../../../PREFIX_EXPERIMENT.md) 2 · 3절, 요약: [`CLAIM_A.md`](../../../../CLAIM_A.md).
 
 | 파일 | 내용 |
 |---|---|

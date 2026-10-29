@@ -1,7 +1,7 @@
 """Experiment 8 / claim A: build the stage 2 stream files and the RL splitter train/val files.
 
-Input: the LmArena prefix data of experiment 2 (PREFIX_EXPERIMENT.md 13절), with the merged answer
-column `id_set_merged` (13.3, scripts/lmarena_merge_duplicate_sets.py).
+Input: the LmArena prefix data (PREFIX_EXPERIMENT.md 2.1 · 8절), with the merged answer
+column `id_set_merged` (scripts/lmarena_merge_duplicate_sets.py).
 
 Output (under <repo>/data/exp8, git-ignored):
   stream/L0_test.parquet, stream/L8_test.parquet  all 40,964 test rows of the level, `id_set` = id_set_merged
