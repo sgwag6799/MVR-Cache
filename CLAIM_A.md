@@ -63,7 +63,7 @@ LmArena와 같은 방식으로 Classification 41K 스트림에서 잰다.
 | E의 헤드 | `stage1_out/prefix_w_variant_L8.pt` (Classification L8 train, 8B 라벨, 20 에폭). 모든 단계에 같은 헤드 |
 | RL 분할기 | Classification train(L0)으로 논문 레시피 그대로 학습, 정답만 8B 응답 문자열 일치 (`scripts/train_rl_splitter_cls.sh`) |
 | 판정 | δ = 0.01, `--sleep 0.02` (LmArena 실험 8과 같음) |
-| 배치 | main: A · C · E · J × (L8 시드 1 · 2 · 3, L0 시드 1) 16개 → capall: C · E를 `cap_scope all`로 8개 |
+| 배치 | ① main: A · C · E · J × (L8 시드 1 · 2 · 3, L0 시드 1) 16개 → ② sleep01: `--sleep 0.1`로 E · J × L8 시드 1 · 2 · 3, A · C × L8 시드 1, 8개 (sleep 민감도 확인) → ③ capall: C · E × (L8 시드 1 · 2 · 3, L0 시드 1)을 `cap_scope all`로 8개 |
 
 ```bash
 git clone -b claim-a-classification https://github.com/sgwag6799/MVR-Cache.git /root/MVR-Cache
@@ -75,7 +75,7 @@ python scripts/make_cls_splits.py
 python scripts/make_stage2_cls_data.py
 bash scripts/train_rl_splitter_cls.sh            # → data/cls_stage2/rl/best.ckpt (조건 J에 필요)
 nohup bash scripts/run_claimA_cls.sh 5 > data/cls_stage2/run.log 2>&1 < /dev/null &
-#   결과: mvr-cache/benchmarks/prefix/claimA_cls/{main,capall}/stage2_summary.csv (실행 중 자동 push)
+#   결과: mvr-cache/benchmarks/prefix/claimA_cls/{main,sleep01,capall}/stage2_summary.csv (실행 중 자동 push)
 ```
 
 ## 파일

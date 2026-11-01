@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 주장 A (Classification): main (sleep 0.02, cap original) → capall (sleep 0.02, cap all) 순서로 하나씩 돌린다.
+# 주장 A (Classification): main (sleep 0.02, cap original) → sleep01 (sleep 0.1, cap original) → capall (sleep 0.02, cap all)
+# 순서로 하나씩 돌린다. sleep01은 sleep 값에 결과가 민감한지 보는 확인용 (E · J는 L8 시드 1 · 2 · 3, A · C는 L8 시드 1).
 # 배치마다 결과 폴더를 나누고, autosave가 집계표 · 실행 요약을 mvr-cache/benchmarks/prefix/claimA_cls/<배치>/ 로 push 한다.
 # Usage (repo root, VSCode 터미널에서. 데이터 · RL 체크포인트 준비 후):
-#   nohup bash scripts/run_claimA_cls.sh [병렬 수, 기본 5] [시작 배치: main|capall] > data/cls_stage2/run.log 2>&1 < /dev/null &
+#   nohup bash scripts/run_claimA_cls.sh [병렬 수, 기본 5] [시작 배치: main|sleep01|capall] > data/cls_stage2/run.log 2>&1 < /dev/null &
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 cd "$REPO"
@@ -19,12 +20,13 @@ run_batch() {  # run_batch <이름> <작업 목록> <SLEEP> <CAP_SCOPE>
   echo "[$(date +%T)] done $name"
 }
 started=0
-for b in main capall; do
+for b in main sleep01 capall; do
   [ "$b" = "$START" ] && started=1
   [ $started -eq 1 ] || continue
   case $b in
-    main)   run_batch main   scripts/stage2_jobs_cls_main.txt   0.02 original ;;
-    capall) run_batch capall scripts/stage2_jobs_cls_capall.txt 0.02 all ;;
+    main)    run_batch main    scripts/stage2_jobs_cls_main.txt    0.02 original ;;
+    sleep01) run_batch sleep01 scripts/stage2_jobs_cls_sleep01.txt 0.1  original ;;
+    capall)  run_batch capall  scripts/stage2_jobs_cls_capall.txt  0.02 all ;;
   esac
 done
 echo "ALL BATCHES DONE"
