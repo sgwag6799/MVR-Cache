@@ -52,6 +52,32 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 2. E 오류율 ≤ δ (모든 단계 · 시드)
 3. L0에서 E 히트율이 C보다 0.5%p 넘게 낮지 않음
 
+## Classification 실행 (브랜치 `claim-a-classification`)
+
+LmArena와 같은 방식으로 Classification 41K 스트림에서 잰다.
+
+| 항목 | 설정 |
+|---|---|
+| 데이터 · 정답 | Classification test 41,000행 중 `fits_all_levels` 38,304행 (앞 2,000행 제외 집계), 8B 응답 문자열 일치 |
+| 조건 | A vCache · C 규칙 분할 + 균등 · **E 규칙 분할 + 학습 가중치** · J 논문 MVR-Cache (RL 분할기 + `multivector_top_k` k 10, `--mix-fullcos` · `--include-full-embedding` 없음) |
+| E의 헤드 | `stage1_out/prefix_w_variant_L8.pt` (Classification L8 train, 8B 라벨, 20 에폭). 모든 단계에 같은 헤드 |
+| RL 분할기 | Classification train(L0)으로 논문 레시피 그대로 학습, 정답만 8B 응답 문자열 일치 (`scripts/train_rl_splitter_cls.sh`) |
+| 판정 | δ = 0.01, `--sleep 0.02` (LmArena 실험 8과 같음) |
+| 배치 | main: A · C · E · J × (L8 시드 1 · 2 · 3, L0 시드 1) 16개 → capall: C · E를 `cap_scope all`로 8개 |
+
+```bash
+git clone -b claim-a-classification https://github.com/sgwag6799/MVR-Cache.git /root/MVR-Cache
+cd /root/MVR-Cache && source colab_setup.sh
+python -c "from huggingface_hub import hf_hub_download as d; d('vCache/SemBenchmarkClassification','train.parquet',repo_type='dataset',local_dir='data/raw')"
+python scripts/make_cls_splits.py
+(cd mvr-cache && python -m benchmarks.prefix.make_prefix_data --train ../data/cls_seed42/train.parquet \
+  --val ../data/cls_seed42/val.parquet --test ../data/cls_seed42_nodedup/test41k.parquet --out ../data/prefix/data)
+python scripts/make_stage2_cls_data.py
+bash scripts/train_rl_splitter_cls.sh            # → data/cls_stage2/rl/best.ckpt (조건 J에 필요)
+nohup bash scripts/run_claimA_cls.sh 5 > data/cls_stage2/run.log 2>&1 < /dev/null &
+#   결과: mvr-cache/benchmarks/prefix/claimA_cls/{main,capall}/stage2_summary.csv (실행 중 자동 push)
+```
+
 ## 파일
 
 | 파일 | 역할 |
@@ -61,6 +87,8 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 | `scripts/make_stage2_lmarena_data.py` | 스트림(L0 · L8 test) · RL 분할기 train/val 파일 |
 | `scripts/train_rl_splitter_lmarena.sh` | MVR-Cache 기준선 RL 분할기 학습 (논문 레시피) |
 | `mvr-cache/benchmarks/prefix/exp2_lmarena/offline_merged/prefix_w_variant_L8.pt` | E의 M3 가중치 헤드 (LmArena L8 train으로 학습) |
+| `mvr-cache/benchmarks/prefix/stage1_out/prefix_w_variant_L{0,2,4,8}.pt` | Classification M3 가중치 헤드 (단계별, 8B 라벨). E는 L8 헤드를 씀 |
+| `scripts/make_cls_splits.py` · `scripts/make_stage2_cls_data.py` · `scripts/train_rl_splitter_cls.sh` · `scripts/run_stage2_cls.sh` · `scripts/run_claimA_cls.sh` | Classification 분할 · 스트림 데이터 · RL 분할기 · 실행 |
 | `scripts/run_stage2_lmarena.sh` · `scripts/stage2_jobs_*.txt` | 스트림 실행 (조건 A~G · J, `SLEEP` · `CAP_SCOPE` · `HEAD` · `OUT` 환경변수) |
 | `scripts/run_claimA_stage2.sh` · `scripts/autosave_stage2.sh` | 보강 배치를 순서대로 실행 · 결과 자동 push |
 | `mvr-cache/benchmarks/prefix/prefix_stage2_report.py` | 히트율 · 오류율 집계 |
