@@ -277,6 +277,15 @@ def main() -> None:
                         help="prefix_rule: prefix_pool.json, used to find where the shared prefix ends (cap_scope original).")
     parser.add_argument("--segment-head", default=None,
                         help="prefix_rule: learned weight head from benchmarks/prefix/prefix_offline.py (M3). Omit for uniform (M2).")
+    # [판정자] 후보 답 합의 판정자 (팀원 판정자 코드 기반). 옵션을 안 주면 원래 vCache 판정과 같다.
+    parser.add_argument("--collect-consensus", action="store_true",
+                        help="Record top-K answer agreement features (a_excl, candidate count) without changing decisions.")
+    parser.add_argument("--consensus-model", default=None,
+                        help="Judge JSON from scripts/judge/judge_fit.py. Turns on the judge (reuse when P >= min_probability).")
+    parser.add_argument("--consensus-scope", choices=["all", "cold"], default="all",
+                        help="all: every request vCache decided to explore (learned_all). cold: only entries with < 6 observations.")
+    parser.add_argument("--consensus-answer-threshold", type=float, default=0.85,
+                        help="BGE cosine for treating two long (> 80 chars) answers as the same.")
     parser.add_argument(
         "--splitter-device",
         default="cpu",
@@ -403,6 +412,14 @@ def main() -> None:
         help="If set, synchronize CUDA around timed blocks for more accurate GPU timings (adds overhead).",
     )
     args = parser.parse_args()
+    consensus_model = None
+    if args.consensus_model:
+        with open(args.consensus_model, encoding="utf-8") as f:
+            consensus_model = json.load(f)
+        print(f"[judge] model {args.consensus_model} scope={args.consensus_scope} "
+              f"min_probability={consensus_model['min_probability']}")
+    if args.collect_consensus:
+        print("[judge] collecting answer-agreement features")
     if args.seed is not None:
         import random as _random
 
@@ -777,6 +794,10 @@ def main() -> None:
             mix_fullcos=bool(args.mix_fullcos),
             timing_collector=timing,
             timing_cuda_sync=bool(args.timing_cuda_sync),
+            consensus_model=consensus_model,
+            consensus_scope=args.consensus_scope,
+            collect_consensus=bool(args.collect_consensus),
+            consensus_answer_threshold=float(args.consensus_answer_threshold),
         )
         vcache = VCache(config=config, policy=policy)
 

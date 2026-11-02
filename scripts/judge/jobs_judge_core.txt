@@ -1,0 +1,7 @@
+# 실험 3 핵심: L8에서 기준선 C vs C + 판정자, 시드 3개 (POOL=shared, 시간이 되면 POOL=task로 한 번 더)
+C_L8_s1 8 1 C
+CJ_L8_s1 8 1 CJ
+C_L8_s2 8 2 C
+CJ_L8_s2 8 2 CJ
+C_L8_s3 8 3 C
+CJ_L8_s3 8 3 CJ

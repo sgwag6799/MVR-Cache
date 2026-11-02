@@ -1,0 +1,7 @@
+# 실험 3 선택: 학습 가중치 + 판정자 (POOL=shared만. E의 헤드가 공용 풀 L8로 학습됨)
+E_L8_s1 8 1 E
+EJ_L8_s1 8 1 EJ
+E_L8_s2 8 2 E
+EJ_L8_s2 8 2 EJ
+E_L8_s3 8 3 E
+EJ_L8_s3 8 3 EJ

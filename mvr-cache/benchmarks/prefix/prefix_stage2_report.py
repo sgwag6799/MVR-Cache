@@ -85,7 +85,7 @@ def main() -> None:
 
     rows, task_rows = [], []
     for f in sorted(glob.glob(os.path.join(args.runs, "*.json"))):
-        m = re.match(r"([A-J])_L(\d+)_s(\d+)\.json$", os.path.basename(f))
+        m = re.match(r"([A-Z]+)_L(\d+)_s(\d+)\.json$", os.path.basename(f))
         if not m:
             continue
         key = {"cond": m[1], "level": int(m[2]), "seed": int(m[3])}

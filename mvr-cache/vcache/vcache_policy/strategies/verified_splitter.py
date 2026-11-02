@@ -19,6 +19,11 @@ from vcache.vcache_core.cache.embedding_store.embedding_store import EmbeddingSt
 from vcache.vcache_core.similarity_evaluator import SimilarityEvaluator
 from vcache.vcache_policy.strategies.verified import _Action, _Algorithm
 from vcache.vcache_policy.vcache_policy import VCachePolicy
+# [판정자] 팀원 판정자 코드(code_changes.patch)의 후보 답 합의 · 확률 계산 함수
+from vcache.vcache_core.splitter.consensus import (
+    predict_correct_probability,
+    top1_excluded_agreement,
+)
 
 PAD_PARENT_ID = np.iinfo(np.uint64).max
 
@@ -207,8 +212,25 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         mix_fullcos: bool = False,
         timing_collector=None,
         timing_cuda_sync: bool = False,
+        consensus_model: Optional[dict] = None,
+        consensus_scope: str = "all",
+        collect_consensus: bool = False,
+        consensus_answer_threshold: float = 0.85,
+        consensus_min_candidates: int = 5,
     ):
         self.bayesian = _Algorithm(delta=delta)
+        # [판정자] consensus_model이 있으면 vCache가 재사용하지 않기로 한 요청 중
+        # P(1등 정답 | s, a_excl, 후보 수) >= min_probability 인 것을 재사용으로 바꾼다.
+        #   scope "all"  : vCache가 EXPLORE로 정한 모든 요청 (learned_all)
+        #   scope "cold" : 그중 1등 항목의 관측이 6개 미만인 요청만 (learned_cold)
+        if consensus_scope not in ("all", "cold"):
+            raise ValueError(f"Unsupported consensus_scope={consensus_scope!r}")
+        self.consensus_model = consensus_model
+        self.consensus_scope = consensus_scope
+        self.collect_consensus = bool(collect_consensus or consensus_model is not None)
+        self.consensus_answer_threshold = float(consensus_answer_threshold)
+        self.consensus_min_candidates = int(consensus_min_candidates)
+        self._consensus_answer_embeddings: dict = {}
         self.similarity_evaluator: Optional[SimilarityEvaluator] = None
         self.inference_engine: Optional[InferenceEngine] = None
         self.cache: Optional[Cache] = None
@@ -594,6 +616,8 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             return False, response, EmbeddingMetadataObj(embedding_id=-1, response="")
 
         action = self.bayesian.select_action(similarity_score=similarity_score, metadata=nn_metadata)
+        if self.consensus_model is not None:
+            action = self._apply_consensus_judge(action, similarity_score, nn_metadata)
 
         match action:
             case _Action.EXPLOIT:
@@ -677,6 +701,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
 
         best_meta: Optional[EmbeddingMetadataObj] = None
         best_s: float = -1.0
+        scored_candidates: list = []  # [판정자] 점수를 매긴 후보 전부 (합의 계산용)
 
         for meta in candidates:
             cached_prompt = getattr(meta, "prompt", "") or ""
@@ -710,13 +735,68 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             except Exception as e:
                 self.logger.warning(f"MaxSim similarity failed for one candidate: {e}")
                 continue
+            scored_candidates.append(meta)
             if s > best_s:
                 best_s = s
                 best_meta = meta
 
         if best_meta is None:
             return None, None
+        if self.collect_consensus:
+            self._attach_consensus_features(best_meta, best_s, scored_candidates)
         return best_meta, best_s
+
+    # ------------------------------------------------------------------ [판정자]
+    def _attach_consensus_features(self, best_meta, best_s, scored_candidates) -> None:
+        """후보 수와 1등을 뺀 후보들의 답 합의 a_excl을 1등 메타데이터에 붙인다 (라벨 미사용)."""
+        try:
+            count, agreement = top1_excluded_agreement(
+                best_meta.response,
+                [m.response for m in scored_candidates],
+                embed_texts=self._embed_consensus_answers,
+                embedding_threshold=self.consensus_answer_threshold,
+            )
+        except Exception as e:  # 합의 계산 실패 시 판정자는 기준선 판정을 그대로 둔다
+            self.logger.warning(f"consensus feature failed: {e}")
+            count, agreement = len(scored_candidates), None
+        best_meta._consensus_raw_score = float(best_s)
+        best_meta._consensus_candidate_count = int(count)
+        best_meta._consensus_agreement_excl = agreement
+
+    def _embed_consensus_answers(self, texts: list) -> np.ndarray:
+        """80자 넘는 답끼리 비교할 때만 쓰는 BGE 문장 벡터 (답 문자열별로 기억)."""
+        missing = [t for t in dict.fromkeys(texts) if t not in self._consensus_answer_embeddings]
+        for t in missing:
+            v = self.splitter.encode_text(t)["pooled_knn"]
+            v = v.detach().float().cpu().numpy() if hasattr(v, "detach") else np.asarray(v, dtype=np.float32)
+            self._consensus_answer_embeddings[t] = np.asarray(v, dtype=np.float32).reshape(-1)
+        return np.stack([self._consensus_answer_embeddings[t] for t in texts])
+
+    def _apply_consensus_judge(self, action, similarity_score, nn_metadata):
+        """vCache 판정(action)을 판정자 확률로 덮어쓴다. 판정 이유는 메타데이터에 남긴다."""
+        count = int(getattr(nn_metadata, "_consensus_candidate_count", 0) or 0)
+        agreement = getattr(nn_metadata, "_consensus_agreement_excl", None)
+        n_obs = len(getattr(nn_metadata, "observations", []) or [])
+        is_cold = n_obs < 6
+        reason = "baseline_exploit" if action == _Action.EXPLOIT else "baseline_fallback"
+        probability = None
+        if action != _Action.EXPLOIT:
+            if self.consensus_scope == "cold" and not is_cold:
+                reason = "not_cold"
+            elif count < self.consensus_min_candidates or agreement is None:
+                reason = "candidate_count_lt_min"
+            else:
+                probability = predict_correct_probability(
+                    similarity_score, agreement, count, self.consensus_model
+                )
+                if probability >= float(self.consensus_model["min_probability"]):
+                    action = _Action.EXPLOIT
+                    reason = "judge_cold" if is_cold else "judge_explore"
+        nn_metadata._consensus_probability = probability
+        nn_metadata._consensus_decision_score = probability
+        nn_metadata._consensus_action = action.name
+        nn_metadata._consensus_reason = reason
+        return action
 
     def __update_cache(
         self,
