@@ -38,6 +38,7 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 | ID | 작업 목록 | 설정 | 내용 |
 |---|---|---|---|
 | A0 + 채우기 | `stage2_jobs_claimA_fill.txt` | 실험 8과 같음 (sleep 0.02) | 재현 확인(A · C · E · F, L8 시드 1) + **E의 L0** + **J** |
+| **A0′ (우선)** | `stage2_jobs_claimA_E_L0.txt` | 실험 8과 같음 (sleep 0.02, cap original) | **E의 L0만**: 시드 1 필수, 시드 2 · 3과 C의 L0 시드 2 · 3은 선택. 결과는 실험 8 결과 폴더(`data/exp8/runs`)에 같이 저장 |
 | A1 | `stage2_jobs_claimA_sleep01.txt` | **sleep 0.1** | A · C · E · F · J, L8 시드 1 · 2 · 3 + L0 시드 1 |
 | A1b | `stage2_jobs_claimA_capall.txt` | sleep 0.1, **cap all** | C · E (공통 문장 목록 없이) |
 | A2 | – | A1과 같음 | Classification |
@@ -45,6 +46,7 @@ L8에서 E − A = **+2.65%p**, E − F = **+1.65%p**, E − C = **+1.60%p**, �
 | A4 | – | – | 참고: vCache + LoRA 인코더(B) |
 
 - E는 모든 단계에서 L8 헤드 하나를 쓴다 (공통 문단 수를 모르는 실제 서비스 조건).
+- A0′ 실행: `bash scripts/run_stage2_lmarena.sh scripts/stage2_jobs_claimA_E_L0.txt 3` (약 1시간, 선택 포함 약 3시간). 집계: `python -m benchmarks.prefix.prefix_stage2_report --runs ../data/exp8/runs --out ../data/exp8/report` (mvr-cache에서).
 - 실행: `nohup bash scripts/run_claimA_stage2.sh 5 > data/claimA/run.log 2>&1 < /dev/null &` (배치를 순서대로, 결과는 `mvr-cache/benchmarks/prefix/claimA_stage2/`로 자동 push). 예상 시간: A0 + 채우기 약 1.5시간, A1 약 8시간, A1b 약 3시간.
 
 데이터마다:
