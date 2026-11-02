@@ -64,6 +64,8 @@ LmArena와 같은 방식으로 Classification 41K 스트림에서 잰다.
 | RL 분할기 | Classification train(L0)으로 논문 레시피 그대로 학습, 정답만 8B 응답 문자열 일치 (`scripts/train_rl_splitter_cls.sh`) |
 | 판정 | δ = 0.01, `--sleep 0.02` (LmArena 실험 8과 같음) |
 | 보고 | 전체 히트율 · 오류율과 함께 **하위 과제별**(ecommerce · amazon · commonsense) 히트율 · 오류율. 전체 흔들림이 대부분 ecommerce에서 나오므로 효과가 한 과제에 몰려 있는지 확인 |
+| **핵심 배치 (우선)** | `stage2_jobs_cls_core.txt` 12개: ① C · E × L8 시드 1 · 2 · 3 → ② A × L8 시드 1 · 2 · 3 → ③ A · C · E × L0 시드 1. RL 분할기(J)가 필요 없어 바로 실행 가능. 결과는 main 배치 폴더에 저장되어 main을 돌리면 건너뜀 |
+| 핵심 배치 판정 기준 (실행 전 고정) | ① L8에서 E − C > 0이 시드 3개 모두 ② 모든 실행의 오류율 ≤ δ ③ L0에서 E가 C보다 0.5%p 넘게 낮지 않음. 하위 과제별 · 누수 1,534행 제외 집계를 함께 보고. 1단계 사전 기준 미달 뒤 추가한 확인이라 보고 시 그렇게 표시 |
 | 배치 | ① main: A · C · E · J × (L8 시드 1 · 2 · 3, L0 시드 1) 16개 → ② sleep01: `--sleep 0.1`로 E · J × L8 시드 1 · 2 · 3, A · C × L8 시드 1, 8개 (sleep 민감도 확인) → ③ capall: C · E × (L8 시드 1 · 2 · 3, L0 시드 1)을 `cap_scope all`로 8개 |
 
 ```bash
@@ -74,6 +76,8 @@ python scripts/make_cls_splits.py
 (cd mvr-cache && python -m benchmarks.prefix.make_prefix_data --train ../data/cls_seed42/train.parquet \
   --val ../data/cls_seed42/val.parquet --test ../data/cls_seed42_nodedup/test41k.parquet --out ../data/prefix/data)
 python scripts/make_stage2_cls_data.py
+# 핵심 배치만 먼저 (L4 1회 약 1시간, 병렬 3이면 약 4~5시간):
+SLEEP=0.02 CAP_SCOPE=original OUT=data/cls_stage2/main bash scripts/run_stage2_cls.sh scripts/stage2_jobs_cls_core.txt 3
 bash scripts/train_rl_splitter_cls.sh            # → data/cls_stage2/rl/best.ckpt (조건 J에 필요)
 nohup bash scripts/run_claimA_cls.sh 5 > data/cls_stage2/run.log 2>&1 < /dev/null &
 #   결과: mvr-cache/benchmarks/prefix/claimA_cls/{main,sleep01,capall}/ (실행 중 자동 push)
