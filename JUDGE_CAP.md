@@ -12,7 +12,7 @@
 |---|---|
 | 기반 | **U (Jmed 모델 그대로)로 확정** (2026-11-03). 실험 A를 기다리지 않는다. 이 실험의 질문(한도가 실제로 오답을 막는가)은 기반에 크게 달려 있지 않고, 비교에 쓸 기존 기록도 같은 기반이다 |
 | 같은 GPU | 이 실험의 모든 조건과, 재사용할 **U_s1 · Jmed_s1 · JC1L_s1** 기록을 같은 GPU에서 돌린 것으로 맞춘다. 다른 GPU에서 돌리면 이 세 기록도 그 GPU에서 다시 돌린다 (3실행 추가). 이유: GPU 종류가 다르면 임베딩 계산의 소수점 끝자리가 달라져, 임계값 근처 요청의 판정이 바뀌고 그 뒤 캐시 경로가 갈라진다. 그러면 같은 시드라도 기존 기록과 요청 단위로 짝지어 비교할 수 없다 |
-| 코드 | **팀원 노트북 방식 그대로**: 저장소 `8cfaa0b` + 패치 3개 (`pair_judge.patch` 07c4751c4be0 · `online_budget.patch` b07856972ddc · `probe_label_only.patch` 92ca6d07db0a). 작업 폴더는 공유 드라이브 "캡스톤디자인(1)"의 `mvr_eval` · `mvr_patches` · `mvr_splits`. JC1L 노트북을 복사해 **`--consensus-pstar` · `--consensus-model` · `--consensus-online-budget`만 바꾼다**. 한도 규칙 · 집계 코드는 고치지 않는다. 이 브랜치의 판정자 코드(공통문단 CJ · EJ용, 고정 p*만 있음)는 쓰지 않는다 |
+| 코드 | **팀원 노트북 방식 그대로**: 저장소 `8cfaa0b` + 패치 3개 (`pair_judge.patch` 07c4751c4be0 · `online_budget.patch` b07856972ddc · `probe_label_only.patch` 92ca6d07db0a). 작업 폴더는 공유 드라이브 "캡스톤디자인(1)"의 `mvr_eval` · `mvr_patches` · `mvr_splits`. 실험 E 노트북(`notebooks/mvr_colab_judge_cap_E.ipynb`)이 기존 기록(Jmed_s1 · JC1L_s1)의 `_meta.json` 인자를 그대로 읽어 **`--consensus-pstar` · `--consensus-model` · `--consensus-online-budget`만 바꾼다**. 한도 규칙 · 집계 코드는 고치지 않는다. 이 브랜치의 판정자 코드(공통문단 CJ · EJ용, 고정 p*만 있음)는 쓰지 않는다 |
 | GPU | **L4** (팀원 노트북이 `REQUIRE_L4`로 강제. 판정자 실험 B · C · D · E 기준선과 맞춤). 실행마다 노트북의 `_meta.json`에 GPU · 커밋 · 패치 지문이 남는다 |
 
 ### JC1L 인자 (패치 기준, JC1L_s1의 `.cmd`로 확인)
@@ -20,11 +20,13 @@
 ```
 U 인자 + --consensus-policy learned_all --consensus-model <learned.json> --consensus-pstar <p*> --consensus-top-k 10
         --consensus-online-budget 0.0035 --consensus-online-mode calibrated --consensus-online-z 1
-        --consensus-online-label-only
+        --consensus-online-label-only --consensus-seed 1
         (기본값 그대로: --consensus-online-bin-width 0.02 --consensus-online-prior 20 --consensus-online-probe 0.1)
 ```
 
 - `--consensus-online-mode`의 기본값은 `cap`(비용 = 1 − p)이다. JC1 · JC1L은 `calibrated`여야 한다.
+- `--consensus-seed`는 probe 추첨 난수(`consensus_seed + 7919`)를 정한다. 짝끼리 같아야 한다.
+- 확인한 기록: SearchQueries `JC1_s1_meta.json`(Tesla T4, ε 0.30%)의 인자가 위와 같고 label only만 없다. 실험 E의 GPU 비교에는 Classification 기록을 쓴다.
 
 ## 1. 목적
 
@@ -152,17 +154,19 @@ U 인자 + --consensus-policy learned_all --consensus-model <learned.json> --con
 
 ## 8. 실행 순서
 
-1. **GPU 확인**: U_s1 · Jmed_s1 · JC1L_s1을 돌린 GPU(L4)와 같은지 `_meta.json`으로 확인한다. 다르면 세 기록을 이 GPU에서 다시 돌린다.
-2. **JC1L 인자 확인**: JC1L_s1의 `.cmd`에서 0절 인자(`calibrated`, z 1, label only)와 같은지 확인한다.
-3. **과신 세기 사전 점검**: `precheck_plow.py --mode pstar`, `--mode shift --pstar <Jmed p*>`. 결과를 3절 표에 적고 커밋한다.
-4. **과신 모델 만들기**: `make_overconf_model.py --model learned.json --shift Δ --out learned_overconf.json`.
-5. **실행**: JC1L 노트북을 복사해 아래 순서로 돌린다. 한도 상태를 남기려면 `ONLINE_BUDGET_STATE` 환경변수도 준다.
+**노트북 `notebooks/mvr_colab_judge_cap_E.ipynb`를 Colab(L4)에서 "모두 실행"한다.** 끝난 단계는 Drive에 남아 건너뛰므로, 끊기면 다시 "모두 실행"하면 이어서 돈다.
+
+1. **GPU 확인 (§0 · §1)**: L4가 아니면 멈춘다. U_s1 · Jmed_s1 · JC1L_s1 `_meta.json`을 Drive에서 찾아 GPU가 다르면 세 기록을 다시 돌릴 목록에 넣는다.
+2. **JC1L 인자 확인 (§1)**: JC1L_s1 인자가 `calibrated` · z 1 · probe 0.1 · prior 20 · 폭 0.02 · label only · ε 0.35%인지, Jmed와 같은 모델 · p*인지 확인한다. 다르면 멈춘다.
+3. **저장소 · 패치 · 데이터 (§2 · §3)**: 패치 지문, test 행 수(= 기존 판정 기록 행 수)를 확인한다.
+4. **사전 기록 (§4)**: `precheck_plow.py`로 p_low(선택이면 Δ도)를 정해 Drive `judge_e_cap/PREREG.json`에 쓴다. 있으면 읽기만 한다. 팀원과 값을 정했으면 `P_LOW_OVERRIDE`.
+5. **실행 (§5)**: JC1L_s1 · Jmed_s1 인자에서 p* · ε · (선택) 모델만 바꿔 순서대로 돌린다. 한도 상태는 `ONLINE_BUDGET_STATE`로 `_budget.json`에 남는다.
    1. Jlow_s1
    2. JlowC35_s1
    3. JlowC10_s1
    4. (선택) Jover_s1
    5. (선택) JoverC35_s1
-6. **집계**: 4절 표를 채우고 5절 기준으로 판정한다.
+6. **집계 (§6 · §7)**: 4절 표와 5절 기준을 출력하고 `results_E.csv` · `free_agg_cp_upper.csv` · `record_E.json`을 Drive에 남긴다.
 
 ## 9. 비용
 
@@ -191,10 +195,12 @@ U 인자 + --consensus-policy learned_all --consensus-model <learned.json> --con
 | `scripts/judge_cap/precheck_plow.py` | 실행 전 과신 세기 고정 (p_low · Δ). Jmed_s1 판정 기록 + `learned.json`으로 p를 다시 계산해 추가 오답 근사 |
 | `scripts/judge_cap/make_overconf_model.py` | Jmed `learned.json`의 intercept에 Δ를 더한 과신 모델 |
 | `scripts/judge_cap/cp_upper_count.py` | 무료 집계: 실행별 오류율 95% CP 상한 > 명목 상한 횟수 |
+| `notebooks/mvr_colab_judge_cap_E.ipynb` | 실험 E 실행 노트북 (Colab L4, "모두 실행", 끊기면 이어서) |
+| `HANDOFF_E.md` | 진행 상황 · 다음에 할 일 (세션을 이어갈 때 먼저 읽는다) |
 | `scripts/judge_cap/run_meta.sh` | 팀원 노트북 밖에서 돌릴 때만 GPU · 커밋 기록 (노트북은 `_meta.json`에 자동 기록) |
 
 ### 팀원에게 받아야 하는 것
 
-- JC1L 노트북 (Classification, 패치 3개 적용)
-- Jmed 판정자 `learned.json` · p* 값
-- U_s1 · Jmed_s1 · JC1L_s1의 `_meta.json` · `.cmd` · 판정 기록(`.jsonl`) · 결과 JSON
+- 노트북이 Drive "캡스톤디자인(1)"에서 U_s1 · Jmed_s1 · JC1L_s1의 `_meta.json` · `.jsonl`, Jmed `learned.json`, 패치, test 파일을 자동으로 찾는다. **공유 드라이브 접근 권한**만 있으면 된다
+- 자동 탐색이 실패하면 노트북 §0의 `BASE_META_OVERRIDE` · `DATA_OVERRIDE`에 경로를 넣는다
+- 팀원 확인: p_low 값(정했으면 `P_LOW_OVERRIDE`), 선택 조건 Jover · JoverC35를 돌릴지(`RUN_OVERCONF`)
