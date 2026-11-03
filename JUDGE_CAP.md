@@ -154,7 +154,7 @@ U 인자 + --consensus-policy learned_all --consensus-model <learned.json> --con
 
 ## 8. 실행 순서
 
-**노트북 `notebooks/mvr_colab_judge_cap_E.ipynb`를 Colab(L4)에서 "모두 실행"한다.** 끝난 단계는 Drive에 남아 건너뛰므로, 끊기면 다시 "모두 실행"하면 이어서 돈다.
+**SSH 판 `scripts/judge_cap/run_E.py`(노트북과 같은 코드, Drive는 `colab drivemount`)를 Colab L4 VM의 tmux 안에서 실행한다.** 브라우저에서는 노트북 `notebooks/mvr_colab_judge_cap_E.ipynb`를 "모두 실행"해도 같다. 끝난 단계는 Drive에 남아 건너뛰므로, 끊기면 다시 "모두 실행"하면 이어서 돈다.
 
 1. **GPU 확인 (§0 · §1)**: L4가 아니면 멈춘다. U_s1 · Jmed_s1 · JC1L_s1 `_meta.json`을 Drive에서 찾아 GPU가 다르면 세 기록을 다시 돌릴 목록에 넣는다.
 2. **JC1L 인자 확인 (§1)**: JC1L_s1 인자가 `calibrated` · z 1 · probe 0.1 · prior 20 · 폭 0.02 · label only · ε 0.35%인지, Jmed와 같은 모델 · p*인지 확인한다. 다르면 멈춘다.
@@ -196,6 +196,7 @@ U 인자 + --consensus-policy learned_all --consensus-model <learned.json> --con
 | `scripts/judge_cap/make_overconf_model.py` | Jmed `learned.json`의 intercept에 Δ를 더한 과신 모델 |
 | `scripts/judge_cap/cp_upper_count.py` | 무료 집계: 실행별 오류율 95% CP 상한 > 명목 상한 횟수 |
 | `notebooks/mvr_colab_judge_cap_E.ipynb` | 실험 E 실행 노트북 (Colab L4, "모두 실행", 끊기면 이어서) |
+| `scripts/judge_cap/run_E.py` · `gen_run_E.py` | SSH 판 실행 스크립트 (노트북 코드 셀에서 생성) |
 | `HANDOFF_E.md` | 진행 상황 · 다음에 할 일 (세션을 이어갈 때 먼저 읽는다) |
 | `scripts/judge_cap/run_meta.sh` | 팀원 노트북 밖에서 돌릴 때만 GPU · 커밋 기록 (노트북은 `_meta.json`에 자동 기록) |
 

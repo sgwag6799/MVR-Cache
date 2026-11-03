@@ -24,7 +24,12 @@
 
 ## 3. 아직 안 한 것 · 할 일
 
-1. **Colab L4에서 노트북 "모두 실행"** (컴퓨팅 단위 구매 후)
+1. **SSH로 실행 (권장)**: 브라우저 노트북은 Drive 인증 오류(`credential propagation was unsuccessful`)가 나서 SSH 판으로 돌린다
+   - 맥 터미널: `colab drivemount -s l4` (Drive 붙이기, 처음 한 번 인증) → `ssh colab-l4`
+   - VM: `cd /content && git clone -b judge-cap-overconfident https://github.com/sgwag6799/MVR-Cache.git judge_cap_run && cd judge_cap_run && tmux new -s e`
+   - `python3 -u scripts/judge_cap/run_E.py 2>&1 | tee -a /content/judge_e_run.log`
+   - 설정은 환경변수: `P_LOW_OVERRIDE=0.5` · `RUN_OVERCONF=1` · `MD_OVERRIDE=...` · `DATA_OVERRIDE=...` · `BASE_META_U/JMED/JC1L=...`
+2. (대안) Colab L4에서 노트북 "모두 실행"
    - 공유 드라이브 "캡스톤디자인(1)"을 내 드라이브에 바로가기로 추가해 둔다
    - 노트북이 멈추면 출력 메시지대로 `BASE_META_OVERRIDE` · `DATA_OVERRIDE` · `MD_OVERRIDE`에 경로를 넣는다
 2. **팀원 확인**
@@ -35,7 +40,7 @@
 ## 4. 이어서 진행할 때 Claude에게
 
 - 이 파일 · `JUDGE_CAP.md`를 읽고, 노트북 §6 · §7 출력이나 `results_E.csv` · `PREREG.json` · `record_E.json`을 올리면 결과 해석(설계 6절 표)부터 이어간다
-- 노트북을 고칠 때는 `scripts/judge_cap/gen_notebook_E.py`를 고치고 다시 만든다 (`python scripts/judge_cap/gen_notebook_E.py notebooks/mvr_colab_judge_cap_E.ipynb`)
+- 노트북 · SSH 판을 고칠 때는 `scripts/judge_cap/gen_notebook_E.py`를 고치고 둘 다 다시 만든다 (`python scripts/judge_cap/gen_notebook_E.py notebooks/mvr_colab_judge_cap_E.ipynb && python scripts/judge_cap/gen_run_E.py notebooks/mvr_colab_judge_cap_E.ipynb scripts/judge_cap/run_E.py`)
 - 데이터 · 결과 파일은 GitHub에 올리지 않는다
 
 ## 5. 확인하지 못한 것 (실행하면 알게 됨)
