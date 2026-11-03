@@ -86,7 +86,8 @@ else:
     MD = pref[0]
 assert all(os.path.isdir(f'{MD}/{n}') for n in NEED), MD
 PATCH_DIR = f'{MD}/mvr_patches'
-E_DIR = f'{MD}/mvr_eval/pair_judge/judge_e_cap'      # 이 실험의 모든 산출물
+# 이 실험의 모든 산출물. 팀 폴더가 읽기 전용이면 쓰기가 되돌려지므로 E_DIR 환경변수로 내 드라이브를 지정한다
+E_DIR = os.environ.get('E_DIR') or f'{MD}/mvr_eval/pair_judge/judge_e_cap'
 RUN_DIR = f'{E_DIR}/runs'
 for d in (E_DIR, RUN_DIR):
     os.makedirs(d, exist_ok=True)
