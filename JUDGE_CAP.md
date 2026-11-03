@@ -11,7 +11,6 @@
 |---|---|
 | 기반 | **U (Jmed 모델 그대로)로 확정** (2026-11-03). 실험 A를 기다리지 않는다. 이 실험의 질문(한도가 실제로 오답을 막는가)은 기반에 크게 달려 있지 않고, 비교에 쓸 기존 기록도 같은 기반이다 |
 | 같은 GPU | 이 실험의 모든 조건과, 재사용할 **U_s1 · Jmed_s1 · JC1L_s1** 기록을 같은 GPU에서 돌린 것으로 맞춘다. 다른 GPU에서 돌리면 이 세 기록도 그 GPU에서 다시 돌린다 (3실행 추가) |
-| 실행 기록 | 실행마다 GPU 종류 · 커밋 해시를 남긴다 (`scripts/judge_cap/run_meta.sh`) |
 | 코드 | **팀원 노트북 방식 그대로**: 저장소 `8cfaa0b` + 패치 3개 (`pair_judge.patch` 07c4751c4be0 · `online_budget.patch` b07856972ddc · `probe_label_only.patch` 92ca6d07db0a), 작업 폴더는 공유 드라이브 "캡스톤디자인(1)"의 `mvr_eval` · `mvr_patches` · `mvr_splits`. JC1L 노트북을 복사해 **p*(`--consensus-pstar`)와 한도 ε만 바꾼다**. 판정자 모델, 구간 폭 0.02, 사전 관측 20건, 구간 비용(사후 평균 + 1σ), probe 10%, 집계 코드는 고치지 않는다. 이 브랜치의 판정자 코드(공통문단 CJ · EJ용, 고정 p*만 있음)는 쓰지 않는다 |
 | GPU | **L4** (팀원 노트북이 `REQUIRE_L4`로 강제. 판정자 실험 B · C · D · E 기준선과 맞춤). 실행마다 노트북의 `_meta.json`에 GPU · 커밋 · 패치 지문이 남는다 |
 
@@ -114,7 +113,7 @@
 
 1. **GPU 확인**: U_s1 · Jmed_s1 · JC1L_s1을 돌린 GPU와 같은지 확인한다. 다르면 세 기록을 이 GPU에서 다시 돌린다.
 2. **p_low 사전 점검**: Jmed_s1 판정 기록으로 `precheck_plow.py`를 돌린다. 필드 이름은 팀원 기록에 맞춰 `--p-key` · `--correct-key` · `--reason-key`로 지정한다. 결과를 2절 표에 적고 커밋한다.
-3. **실행**: 실행마다 `bash scripts/judge_cap/run_meta.sh <실행이름> <출력폴더>`로 GPU · 커밋을 남긴 뒤 순서대로 돌린다.
+3. **실행**: JC1L 노트북을 복사해 p*와 ε만 바꾸고 순서대로 돌린다 (GPU · 커밋 · 패치 지문은 노트북의 `_meta.json`에 남는다).
    1. Jlow_s1
    2. JlowC35_s1
    3. JlowC10_s1
@@ -144,7 +143,7 @@
 | `JUDGE_CAP.md` | 이 설계 문서 |
 | `scripts/judge_cap/precheck_plow.py` | 실행 전 p_low 고정 (Jmed_s1 판정 기록으로 추가 오답 근사) |
 | `scripts/judge_cap/cp_upper_count.py` | 무료 집계: 실행별 오류율 95% CP 상한 > 명목 상한 횟수 |
-| `scripts/judge_cap/run_meta.sh` | 실행마다 GPU 종류 · 커밋 해시 기록 |
+| `scripts/judge_cap/run_meta.sh` | 팀원 노트북 밖에서 돌릴 때만 GPU · 커밋 기록 (노트북은 `_meta.json`에 자동 기록) |
 
 ### 팀원에게 받아야 하는 것
 
