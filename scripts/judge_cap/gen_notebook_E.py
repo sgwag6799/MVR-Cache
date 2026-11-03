@@ -60,7 +60,9 @@ if REQUIRE_L4:
     assert 'L4' in GPU_NAME, f'GPU 가 {GPU_NAME} 다 — 런타임 유형을 L4 로 바꾼다 (기존 기록과 같은 GPU)'
 
 from google.colab import drive
-drive.mount('/content/drive')
+# 인증 창(팝업)에서 '허용'을 눌러야 끝난다. 큰 공유 드라이브는 마운트가 느려 기본 2분을 넘길 수 있어 10분으로 늘린다
+if not os.path.isdir('/content/drive/MyDrive'):
+    drive.mount('/content/drive', force_remount=True, timeout_ms=600000)
 NEED = ('mvr_eval', 'mvr_patches', 'mvr_splits')
 def _cands():
     roots = ['/content/drive/MyDrive'] + sorted(glob.glob('/content/drive/Shareddrives/*'))
