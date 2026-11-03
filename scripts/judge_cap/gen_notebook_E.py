@@ -551,6 +551,8 @@ if RUN_FREE_AGG:
             k, n = int((x['hit'].astype(bool) & (x['nn_correct'] != True)).sum()), len(x)
         except Exception as e:
             print('건너뜀', q, e); continue
+        if n == 0:
+            print('건너뜀', q, '기록 없음 (i >= 2000 행 0개)'); continue
         delta = float(_arg(a, '--delta', 0.01))
         eps = float(_arg(a, '--consensus-online-budget', 0.0035 if '--consensus-policy' in a else 0.0))
         u = ub(k, n)
