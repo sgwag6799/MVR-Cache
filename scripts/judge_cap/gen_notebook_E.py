@@ -284,10 +284,11 @@ shutil.copy2(src, TEST_P)
 _te = pd.read_parquet(TEST_P)
 N_TEST = len(_te)
 man = os.path.join(os.path.dirname(src), 'manifest.json')
-if os.path.exists(man) and 'id' in _te:
-    fp = hashlib.sha1(','.join(map(str, _te['id'])).encode()).hexdigest()[:12]
-    want = {v.get('fingerprint') for v in json.load(open(man, encoding='utf-8')).get('splits', {}).values()}
-    assert fp in want, f'지문 {fp} 이 manifest 에 없다 {want}'
+if os.path.exists(man) and 'id' in _te and 'dataset_name' in _te:
+    # Classification manifest: fingerprint = sha1("dataset_name:id" 를 행 순서대로 이은 것)[:12]
+    fp = hashlib.sha1(','.join(f'{a}:{b}' for a, b in zip(_te['dataset_name'], _te['id'])).encode()).hexdigest()[:12]
+    want = json.load(open(man, encoding='utf-8')).get('fingerprint')
+    assert fp == want, f'지문 {fp} ≠ manifest {want}'
     print('지문 확인', fp)
 for k in BASE:
     if BASE[k]['jsonl']:

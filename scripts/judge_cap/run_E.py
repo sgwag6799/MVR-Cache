@@ -32,8 +32,9 @@ if not glob.glob('/content/drive/*'):
     raise SystemExit('Drive 가 안 붙어 있다 → 맥 터미널에서 `colab drivemount -s l4` 를 실행하고 인증한 뒤 다시 실행한다')
 NEED = ('mvr_eval', 'mvr_patches', 'mvr_splits')
 def _cands():
-    roots = sorted({*glob.glob('/content/drive/MyDrive'), *glob.glob('/content/drive/My Drive'),
-                    *glob.glob('/content/drive/Shareddrives/*'), *glob.glob('/content/drive/Shared drives/*')})
+    # 'My Drive' 는 'MyDrive' 와 같은 폴더라 둘 다 있으면 MyDrive 만 쓴다
+    roots = (glob.glob('/content/drive/MyDrive') or glob.glob('/content/drive/My Drive')) + sorted(
+        {*glob.glob('/content/drive/Shareddrives/*'), *glob.glob('/content/drive/Shared drives/*')})
     out = []
     for r in roots:
         for d1 in sorted(os.listdir(r)) if os.path.isdir(r) else []:
@@ -211,10 +212,11 @@ shutil.copy2(src, TEST_P)
 _te = pd.read_parquet(TEST_P)
 N_TEST = len(_te)
 man = os.path.join(os.path.dirname(src), 'manifest.json')
-if os.path.exists(man) and 'id' in _te:
-    fp = hashlib.sha1(','.join(map(str, _te['id'])).encode()).hexdigest()[:12]
-    want = {v.get('fingerprint') for v in json.load(open(man, encoding='utf-8')).get('splits', {}).values()}
-    assert fp in want, f'지문 {fp} 이 manifest 에 없다 {want}'
+if os.path.exists(man) and 'id' in _te and 'dataset_name' in _te:
+    # Classification manifest: fingerprint = sha1("dataset_name:id" 를 행 순서대로 이은 것)[:12]
+    fp = hashlib.sha1(','.join(f'{a}:{b}' for a, b in zip(_te['dataset_name'], _te['id'])).encode()).hexdigest()[:12]
+    want = json.load(open(man, encoding='utf-8')).get('fingerprint')
+    assert fp == want, f'지문 {fp} ≠ manifest {want}'
     print('지문 확인', fp)
 for k in BASE:
     if BASE[k]['jsonl']:

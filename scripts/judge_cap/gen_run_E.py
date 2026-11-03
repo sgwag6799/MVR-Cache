@@ -41,8 +41,9 @@ if not glob.glob('/content/drive/*'):
     raise SystemExit('Drive 가 안 붙어 있다 → 맥 터미널에서 `colab drivemount -s l4` 를 실행하고 인증한 뒤 다시 실행한다')
 ''' + c0[b:]
 c0 = rep(c0, "    roots = ['/content/drive/MyDrive'] + sorted(glob.glob('/content/drive/Shareddrives/*'))",
-         "    roots = sorted({*glob.glob('/content/drive/MyDrive'), *glob.glob('/content/drive/My Drive'),\n"
-         "                    *glob.glob('/content/drive/Shareddrives/*'), *glob.glob('/content/drive/Shared drives/*')})")
+         "    # 'My Drive' 는 'MyDrive' 와 같은 폴더라 둘 다 있으면 MyDrive 만 쓴다\n"
+         "    roots = (glob.glob('/content/drive/MyDrive') or glob.glob('/content/drive/My Drive')) + sorted(\n"
+         "        {*glob.glob('/content/drive/Shareddrives/*'), *glob.glob('/content/drive/Shared drives/*')})")
 c1 = "_T0 = time.time()\nAUTO = {'reason': None}\nprint(f'시작 {datetime.datetime.now().isoformat(timespec=\"seconds\")} · 최대 {MAX_HOURS}시간 (자동 종료 없음)')\n"
 last = rep(codes[-1], "print('1분 뒤 런타임 종료' if AUTO_SHUTDOWN else '')",
            "print('끝. 런타임은 맥 터미널에서 `colab stop -s <세션>` 으로 끈다 (다른 실험이 같은 세션에서 돌고 있으면 그 실험이 끝난 뒤)')")
