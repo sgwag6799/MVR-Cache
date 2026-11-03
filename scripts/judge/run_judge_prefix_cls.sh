@@ -7,6 +7,8 @@
 #   jobs 한 줄 = "<이름> <단계 0|8> <시드> <조건>"
 #     C  규칙 분할(구두점, 상한 32) + 균등, 후보 10개 (기준선, 실험 2의 C와 같은 설정)
 #     CJ C + 판정자            E  C + 학습 가중치(M3)            EJ E + 판정자
+#     [판정자 실험 G] CJL C + 판정자 + 실행 중 한도 JC1L (calibrated, z 1, probe 0.1, label only, 한도 ONLINE_EPS)
+#                     EJL E + 판정자 + JC1L          C0125 · C015 · C020  C 에서 δ 만 0.0125 · 0.015 · 0.02
 #   환경변수: POOL (shared | task), SLEEP (0.02), BUDGET (0.0035 = add35), SCOPE (all | cold),
 #            COLLECT_SEEDS (판정자 수집 시드, 기본 "42". 여러 개면 p* 중앙값), HEAD (E의 헤드), OUT
 set -uo pipefail
@@ -14,6 +16,7 @@ JOBS=$(realpath "$1"); PAR=${2:-3}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 POOL=${POOL:-shared}; SLEEP=${SLEEP:-0.02}; BUDGET=${BUDGET:-0.0035}; SCOPE=${SCOPE:-all}
 COLLECT_SEEDS=${COLLECT_SEEDS:-42}
+ONLINE_EPS=${ONLINE_EPS:-0.0035}
 DATA=$REPO/data/judge_cls/$POOL
 OUT=$(realpath -m "${OUT:-$REPO/data/judge_cls/runs/$POOL}")
 JDIR=$REPO/data/judge_cls/judge
@@ -57,12 +60,23 @@ run_one() {
   [ -f "$OUT/$name.json" ] && { echo "[skip] $name"; return 0; }
   local common="--dataset $DATA/L${level}_test.parquet $BASE --filter-true-column fits_all_levels --seed $seed --output-json $OUT/$name.json --timing-output $OUT/$name.timing.txt"
   local judge="--consensus-model $(judge_path "$level") --consensus-scope $SCOPE"
+  local cap="--consensus-online-budget $ONLINE_EPS --consensus-online-mode calibrated --consensus-online-z 1 --consensus-online-probe 0.1 --consensus-online-prior 20 --consensus-online-bin-width 0.02 --consensus-online-label-only --consensus-seed $seed"
+  local dcommon="$common"
+  case $cond in C0125) dcommon="${common/--delta 0.01/--delta 0.0125}" ;; C015) dcommon="${common/--delta 0.01/--delta 0.015}" ;; C020) dcommon="${common/--delta 0.01/--delta 0.02}" ;; esac
+  # 실행 기록: GPU 종류 · 커밋 해시 · 조건 (실행 조건 "실행 기록에 GPU 종류 · 커밋 해시를 남긴다")
+  printf '{"name": "%s", "cond": "%s", "level": %s, "seed": %s, "gpu": "%s", "commit": "%s", "dirty": %s, "started": "%s"}\n' \
+    "$name" "$cond" "$level" "$seed" "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)" \
+    "$(git -C "$REPO" rev-parse HEAD)" "$(git -C "$REPO" status --porcelain -uno | grep -q . && echo true || echo false)" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/$name.meta.json"
   local t0=$(date +%s) rc
   case $cond in
     C)  DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE ;;
     CJ) DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE $judge ;;
     E)  DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE --segment-head $HEAD ;;
     EJ) DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE --segment-head $HEAD $judge ;;
+    CJL) ONLINE_BUDGET_STATE=$OUT/$name.budget.json DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE $judge $cap ;;
+    EJL) ONLINE_BUDGET_STATE=$OUT/$name.budget.json DECISION_LOG=$OUT/$name.jsonl $EVAL $common $RULE --segment-head $HEAD $judge $cap ;;
+    C0125|C015|C020) DECISION_LOG=$OUT/$name.jsonl $EVAL $dcommon $RULE ;;
     *) echo "unknown condition $cond"; return 1 ;;
   esac > "$OUT/$name.log" 2>&1
   rc=$?
@@ -70,10 +84,10 @@ run_one() {
 }
 
 # 판정자가 필요한 단계는 test 실행 전에 먼저 고정한다
-for L in $(grep -v "^#" "$JOBS" | awk 'NF==4 && ($4=="CJ" || $4=="EJ") {print $2}' | sort -u); do
+for L in $(grep -v "^#" "$JOBS" | awk 'NF==4 && ($4 ~ /^(CJ|EJ|CJL|EJL)$/) {print $2}' | sort -u); do
   build_judge "$L" || exit 1
 done
 export -f run_one judge_path
-export REPO OUT DATA JDIR POOL SCOPE BUDGET HEAD BASE RULE EVAL
+export REPO OUT DATA JDIR POOL SCOPE BUDGET HEAD BASE RULE EVAL ONLINE_EPS
 grep -v "^#" "$JOBS" | grep -v "^\s*$" | xargs -P "$PAR" -L 1 bash -c 'run_one "$@"' _
 echo "ALL JOBS DONE"

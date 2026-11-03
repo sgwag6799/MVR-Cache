@@ -286,6 +286,24 @@ def main() -> None:
                         help="all: every request vCache decided to explore (learned_all). cold: only entries with < 6 observations.")
     parser.add_argument("--consensus-answer-threshold", type=float, default=0.85,
                         help="BGE cosine for treating two long (> 80 chars) answers as the same.")
+    # [실행 중 한도] 팀원 online_budget.patch · probe_label_only.patch 와 같은 옵션 이름 · 의미 (판정자 실험 G)
+    parser.add_argument("--consensus-online-budget", type=float, default=None,
+                        help="Run-time cap on the judge's added errors: expected added errors of judge flips "
+                        "<= budget x requests so far (e.g. 0.0035). Needs --consensus-model.")
+    parser.add_argument("--consensus-online-mode", choices=["cap", "calibrated"], default="calibrated",
+                        help="cap: cost = 1 - p. calibrated: per-bin error rate estimated online (JC0 / JC1).")
+    parser.add_argument("--consensus-online-bin-width", type=float, default=0.02)
+    parser.add_argument("--consensus-online-prior", type=float, default=20.0,
+                        help="Pseudo-count of the model-based prior per bin (calibrated mode).")
+    parser.add_argument("--consensus-online-probe", type=float, default=0.1,
+                        help="calibrated mode: share of admitted requests sent to the LLM for labels.")
+    parser.add_argument("--consensus-online-z", type=float, default=0.0,
+                        help="calibrated mode: cost = posterior mean + z x posterior sd (JC1 = 1).")
+    parser.add_argument("--consensus-online-label-only", action="store_true",
+                        help="Requests the budget sent to the LLM (probe / blocked / bin closed) give their label to "
+                        "the budget estimate only: no vCache observation, no cache add (JC1L).")
+    parser.add_argument("--consensus-seed", type=int, default=None,
+                        help="Seed of the probe draw (default: --seed, else 0).")
     parser.add_argument(
         "--splitter-device",
         default="cpu",
@@ -412,6 +430,10 @@ def main() -> None:
         help="If set, synchronize CUDA around timed blocks for more accurate GPU timings (adds overhead).",
     )
     args = parser.parse_args()
+    if args.consensus_online_budget is not None and not args.consensus_model:
+        parser.error("--consensus-online-budget needs --consensus-model")
+    if args.consensus_online_label_only and args.consensus_online_budget is None:
+        parser.error("--consensus-online-label-only needs --consensus-online-budget")
     consensus_model = None
     if args.consensus_model:
         with open(args.consensus_model, encoding="utf-8") as f:
@@ -798,6 +820,15 @@ def main() -> None:
             consensus_scope=args.consensus_scope,
             collect_consensus=bool(args.collect_consensus),
             consensus_answer_threshold=float(args.consensus_answer_threshold),
+            consensus_online_budget=args.consensus_online_budget,
+            consensus_online_mode=args.consensus_online_mode,
+            consensus_online_bin_width=float(args.consensus_online_bin_width),
+            consensus_online_prior=float(args.consensus_online_prior),
+            consensus_online_probe=float(args.consensus_online_probe),
+            consensus_online_z=float(args.consensus_online_z),
+            consensus_online_label_only=bool(args.consensus_online_label_only),
+            consensus_seed=int(args.consensus_seed if args.consensus_seed is not None
+                               else (args.seed if args.seed is not None else 0)),
         )
         vcache = VCache(config=config, policy=policy)
 
@@ -946,6 +977,14 @@ def main() -> None:
             "fn": fn,
             "total_time": elapsed,
         }
+        ob_state = policy.online_budget_state() if hasattr(policy, "online_budget_state") else None
+        if ob_state is not None:
+            summary["online_budget"] = ob_state
+            print("online_budget=" + json.dumps({k: v for k, v in ob_state.items() if k != "bins"}, ensure_ascii=False))
+            ob_path = os.environ.get("ONLINE_BUDGET_STATE")
+            if ob_path:
+                with open(ob_path, "w", encoding="utf-8") as f:
+                    json.dump(ob_state, f, ensure_ascii=False, indent=1)
         all_summaries.append(summary)
 
         out_path = _resolve_output_path(delta=float(delta), candidate_k=int(candidate_k))

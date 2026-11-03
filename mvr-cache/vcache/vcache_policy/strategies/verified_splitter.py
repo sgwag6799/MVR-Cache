@@ -217,6 +217,14 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         collect_consensus: bool = False,
         consensus_answer_threshold: float = 0.85,
         consensus_min_candidates: int = 5,
+        consensus_online_budget: Optional[float] = None,
+        consensus_online_mode: str = "calibrated",
+        consensus_online_bin_width: float = 0.02,
+        consensus_online_prior: float = 20.0,
+        consensus_online_probe: float = 0.1,
+        consensus_online_z: float = 0.0,
+        consensus_online_label_only: bool = False,
+        consensus_seed: int = 0,
     ):
         self.bayesian = _Algorithm(delta=delta)
         # [판정자] consensus_model이 있으면 vCache가 재사용하지 않기로 한 요청 중
@@ -230,6 +238,52 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         self.collect_consensus = bool(collect_consensus or consensus_model is not None)
         self.consensus_answer_threshold = float(consensus_answer_threshold)
         self.consensus_min_candidates = int(consensus_min_candidates)
+        # [실행 중 한도] 팀원 online_budget.patch(b07856972ddc) · probe_label_only.patch(92ca6d07db0a)의
+        # 규칙을 이 정책(판정자 = _apply_consensus_judge, p* = consensus_model["min_probability"])에 옮김.
+        #   cap        : 비용 = 1 - p
+        #   calibrated : 비용 = 확률 구간별 오답률 추정치 (사전값 1 - 구간 중앙, 사전 관측 prior 건, 라벨로 갱신,
+        #                z > 0 이면 사후 평균 + z x 사후 표준편차). 추정 오답률이 낮은 구간부터 "도착률 x 오답률" 합이
+        #                한도에 찰 때까지 열고, 통과시킨 요청의 비용 합(최신 추정치로 다시 계산)이 "요청 수 x 한도"를
+        #                넘으면 막는다. 통과 요청의 probe 비율은 라벨을 얻으려 LLM 으로 보낸다.
+        #   label_only : 한도가 LLM 으로 돌린 요청(막힘 · 구간 닫힘 · probe)은 라벨을 한도 추정에만 쓰고
+        #                vCache 관측 · 캐시 추가를 하지 않는다 → 캐시 상태 경로가 판정자만 쓴 경우(CJ)와 같다
+        self.consensus_online_budget = (
+            float(consensus_online_budget) if consensus_online_budget is not None else None
+        )
+        self.consensus_online_mode = str(consensus_online_mode)
+        self._ob_label_only = bool(consensus_online_label_only)
+        if self.consensus_online_budget is not None:
+            if consensus_model is None:
+                raise ValueError("consensus_online_budget needs consensus_model (judge with p*)")
+            if not 0.0 < self.consensus_online_budget < 1.0:
+                raise ValueError("consensus_online_budget must be in (0, 1)")
+            if self.consensus_online_mode not in ("cap", "calibrated"):
+                raise ValueError(f"Unsupported consensus_online_mode={consensus_online_mode!r}")
+            if (not 0.0 < float(consensus_online_bin_width) <= 1.0 or float(consensus_online_prior) < 0.0
+                    or not 0.0 <= float(consensus_online_probe) < 1.0 or float(consensus_online_z) < 0.0):
+                raise ValueError("bad consensus_online_bin_width / prior / probe / z")
+            self._ob_pstar = float(consensus_model["min_probability"])
+            self._ob_probe = float(consensus_online_probe)
+            self._ob_z = float(consensus_online_z)
+            self._ob_skipped_updates = 0
+            # 전용 생성기: vCache 의 전역 random 과 섞이면 기준선 판정까지 바뀐다
+            self._ob_rng = np.random.default_rng(int(consensus_seed) + 7919)
+            width = float(consensus_online_bin_width)
+            n_bins = max(1, int(np.ceil((1.0 - self._ob_pstar) / width - 1e-9)))
+            self._ob_width = width
+            self._ob_prior = float(consensus_online_prior)
+            self._ob_lo = self._ob_pstar + width * np.arange(n_bins)
+            self._ob_mid = np.minimum(self._ob_lo + width / 2.0, (self._ob_lo + 1.0) / 2.0)
+            self._ob_arrivals = np.zeros(n_bins, dtype=np.int64)   # p >= p* 로 한도 검사에 온 요청
+            self._ob_accepted = np.zeros(n_bins, dtype=np.int64)
+            self._ob_probed = np.zeros(n_bins, dtype=np.int64)     # 허용 구간인데 라벨용으로 LLM 호출
+            self._ob_label_n = np.zeros(n_bins, dtype=np.int64)    # LLM 으로 돌려 라벨을 얻은 요청
+            self._ob_label_err = np.zeros(n_bins, dtype=np.int64)
+            self._ob_requests = 0          # 지금까지 들어온 요청 수 (후보 없는 요청 포함)
+            self._ob_spent = 0.0           # 통과시킨 요청의 비용 합 (기대 추가 오답)
+            self._ob_spent_model = 0.0     # 같은 요청들의 1 - p 합 (비교용)
+        elif self._ob_label_only:
+            raise ValueError("consensus_online_label_only needs consensus_online_budget")
         self._consensus_answer_embeddings: dict = {}
         self.similarity_evaluator: Optional[SimilarityEvaluator] = None
         self.inference_engine: Optional[InferenceEngine] = None
@@ -597,6 +651,8 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         # - MaxSim/RL (token embeddings)
         if self.splitter is None:
             raise ValueError("VerifiedSplitterDecisionPolicy requires `splitter` (MaxSimSplitter) to be provided.")
+        if self.consensus_online_budget is not None:
+            self._ob_requests += 1
 
         # "embedding time": query encoding (LM forward + pooling) inside MaxSimSplitter
         with self._time_block("splitter.encode_text"):
@@ -624,6 +680,19 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                 return True, nn_metadata.response, nn_metadata
             case _Action.EXPLORE:
                 response = self.inference_engine.create(prompt=prompt, system_prompt=system_prompt)
+                pending = getattr(nn_metadata, "_ob_pending_bin", None)
+                if pending is not None and self.similarity_evaluator is not None:
+                    # 한도가 LLM 으로 돌린 요청: LLM 응답으로 1등 후보가 맞았는지 안다 (vCache 관측과 같은 판정)
+                    correct = self.similarity_evaluator.answers_similar(
+                        a=response, b=nn_metadata.response,
+                        id_set_a=id_set, id_set_b=nn_metadata.id_set,
+                    )
+                    self._ob_label_n[pending] += 1
+                    self._ob_label_err[pending] += int(not correct)
+                    nn_metadata._ob_pending_bin = None
+                    if self._ob_label_only:
+                        self._ob_skipped_updates += 1
+                        return False, response, nn_metadata
                 self.__update_cache(
                     response=response,
                     nn_metadata=nn_metadata,
@@ -780,6 +849,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         is_cold = n_obs < 6
         reason = "baseline_exploit" if action == _Action.EXPLOIT else "baseline_fallback"
         probability = None
+        nn_metadata._ob_pending_bin = None      # 메타데이터 객체는 요청 간에 재사용된다
         if action != _Action.EXPLOIT:
             if self.consensus_scope == "cold" and not is_cold:
                 reason = "not_cold"
@@ -789,7 +859,13 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                 probability = predict_correct_probability(
                     similarity_score, agreement, count, self.consensus_model
                 )
-                if probability >= float(self.consensus_model["min_probability"]):
+                accept = probability >= float(self.consensus_model["min_probability"])
+                if accept and self.consensus_online_budget is not None:
+                    accept, k, why = self._online_budget_admit(probability)
+                    if not accept:
+                        reason = why
+                        nn_metadata._ob_pending_bin = k
+                if accept:
                     action = _Action.EXPLOIT
                     reason = "judge_cold" if is_cold else "judge_explore"
         nn_metadata._consensus_probability = probability
@@ -797,6 +873,88 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         nn_metadata._consensus_action = action.name
         nn_metadata._consensus_reason = reason
         return action
+
+    def _ob_error_estimate(self) -> np.ndarray:
+        # 구간별 오답률 추정: 판정자 예측(1 - 구간 중앙)을 prior 건수만큼의 사전 관측으로 두고 라벨로 갱신
+        m = self._ob_prior
+        prior = 1.0 - self._ob_mid
+        n = self._ob_label_n + m
+        mean = (self._ob_label_err + m * prior) / np.maximum(n, 1e-12)
+        if self._ob_z <= 0.0:
+            return mean
+        # Beta 사후 표준편차 근사: sqrt(mean (1 - mean) / (n + 1))
+        sd = np.sqrt(np.clip(mean * (1.0 - mean), 0.0, None) / (n + 1.0))
+        return np.minimum(1.0, mean + self._ob_z * sd)
+
+    def _ob_admitted_bins(self, est: np.ndarray) -> np.ndarray:
+        # 추정 오답률이 낮은 구간부터, 요청당 기대 추가 오답(도착률 x 오답률)의 합이 한도에 찰 때까지.
+        # 경계 구간도 넣는다 — 넘치는 만큼은 누적 한도가 막는다.
+        t = max(1, self._ob_requests)
+        rate = self._ob_arrivals / t
+        admitted = np.zeros(len(est), dtype=bool)
+        cum = 0.0
+        for k in np.argsort(est, kind="stable"):
+            admitted[k] = True
+            cum += rate[k] * est[k]
+            if cum > self.consensus_online_budget:
+                break
+        return admitted
+
+    def _online_budget_admit(self, probability: float) -> Tuple[bool, int, str]:
+        k = int(min(len(self._ob_lo) - 1, max(0, (probability - self._ob_pstar) // self._ob_width)))
+        self._ob_arrivals[k] += 1
+        if self.consensus_online_mode == "cap":
+            cost = 1.0 - float(probability)
+        else:
+            est = self._ob_error_estimate()
+            if not self._ob_admitted_bins(est)[k]:
+                return False, k, "online_budget_bin_closed"
+            cost = float(est[k])
+            # 이미 통과시킨 요청의 비용도 현재 추정치로 다시 센다
+            self._ob_spent = float(np.dot(self._ob_accepted, est))
+        if self._ob_spent + cost > self.consensus_online_budget * self._ob_requests:
+            return False, k, "online_budget_blocked"
+        if (self.consensus_online_mode == "calibrated" and self._ob_probe > 0.0
+                and self._ob_rng.random() < self._ob_probe):
+            self._ob_probed[k] += 1
+            return False, k, "online_budget_probe"
+        self._ob_spent += cost
+        self._ob_spent_model += 1.0 - float(probability)
+        self._ob_accepted[k] += 1
+        return True, k, "accepted"
+
+    def online_budget_state(self) -> Optional[dict]:
+        if self.consensus_online_budget is None:
+            return None
+        est = self._ob_error_estimate()
+        if self.consensus_online_mode == "calibrated":
+            self._ob_spent = float(np.dot(self._ob_accepted, est))
+        return {
+            "budget": self.consensus_online_budget,
+            "mode": self.consensus_online_mode,
+            "pstar": self._ob_pstar,
+            "bin_width": self._ob_width,
+            "prior": self._ob_prior,
+            "probe": self._ob_probe,
+            "z": self._ob_z,
+            "label_only": self._ob_label_only,
+            "skipped_updates": int(self._ob_skipped_updates),
+            "requests": int(self._ob_requests),
+            "spent": float(self._ob_spent),
+            "spent_model": float(self._ob_spent_model),
+            "allowed": float(self.consensus_online_budget * self._ob_requests),
+            "bins": [
+                {
+                    "lo": float(lo), "arrivals": int(a), "accepted": int(c), "probed": int(q),
+                    "label_n": int(n), "label_err": int(e), "est_err": float(x),
+                }
+                for lo, a, c, q, n, e, x in zip(
+                    self._ob_lo, self._ob_arrivals, self._ob_accepted, self._ob_probed,
+                    self._ob_label_n, self._ob_label_err, est,
+                )
+            ],
+            "admitted_final": [bool(v) for v in self._ob_admitted_bins(est)],
+        }
 
     def __update_cache(
         self,
