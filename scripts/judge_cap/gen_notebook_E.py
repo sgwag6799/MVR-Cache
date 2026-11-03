@@ -219,7 +219,7 @@ def _run(cmd):
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
 _run('pip install -q uv')
 _run('uv python install 3.11')
-_run('uv venv -q --python 3.11 /content/py311')
+_run('uv venv -q --clear --python 3.11 /content/py311')
 PY = '/content/py311/bin/python'
 _run(f'uv pip install -q --python {PY} '
      'torch==2.8.0 numpy==1.26.4 pandas==2.3.3 pyarrow==22.0.0 '
