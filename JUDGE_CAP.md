@@ -112,7 +112,7 @@
 ## 7. 실행 순서
 
 1. **GPU 확인**: U_s1 · Jmed_s1 · JC1L_s1을 돌린 GPU와 같은지 확인한다. 다르면 세 기록을 이 GPU에서 다시 돌린다.
-2. **p_low 사전 점검**: Jmed_s1 판정 기록으로 `precheck_plow.py`를 돌린다. 필드 이름은 팀원 기록에 맞춰 `--p-key` · `--correct-key` · `--reason-key`로 지정한다. 결과를 2절 표에 적고 커밋한다.
+2. **p_low 사전 점검**: Jmed_s1 판정 기록으로 `precheck_plow.py`를 돌린다. 판정 기록에는 p가 남지 않으므로 Jmed 판정자 모델(`learned.json`)로 p를 다시 계산한다 (`--model`). 대상 요청은 팀원 노트북의 `eligible()`과 같다 (reason cold · explore, has_nn, 후보 5개 이상, a_excl 있음). 결과를 2절 표에 적고 커밋한다.
 3. **실행**: JC1L 노트북을 복사해 p*와 ε만 바꾸고 순서대로 돌린다 (GPU · 커밋 · 패치 지문은 노트북의 `_meta.json`에 남는다).
    1. Jlow_s1
    2. JlowC35_s1
@@ -141,7 +141,7 @@
 | 파일 | 역할 |
 |---|---|
 | `JUDGE_CAP.md` | 이 설계 문서 |
-| `scripts/judge_cap/precheck_plow.py` | 실행 전 p_low 고정 (Jmed_s1 판정 기록으로 추가 오답 근사) |
+| `scripts/judge_cap/precheck_plow.py` | 실행 전 p_low 고정 (Jmed_s1 판정 기록 + `learned.json`으로 p를 다시 계산해 추가 오답 근사) |
 | `scripts/judge_cap/cp_upper_count.py` | 무료 집계: 실행별 오류율 95% CP 상한 > 명목 상한 횟수 |
 | `scripts/judge_cap/run_meta.sh` | 팀원 노트북 밖에서 돌릴 때만 GPU · 커밋 기록 (노트북은 `_meta.json`에 자동 기록) |
 
