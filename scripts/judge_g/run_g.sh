@@ -35,7 +35,7 @@ if [[ ! -s data/judge_cls/shared/L8_test.parquet ]]; then
   [[ -s data/cls_seed42/train.parquet ]] || python scripts/make_cls_splits.py
   (cd mvr-cache && python -m benchmarks.prefix.make_prefix_data --train ../data/cls_seed42/train.parquet --val ../data/cls_seed42/val.parquet \
      --test ../data/cls_seed42_nodedup/test41k.parquet --out ../data/prefix/data --levels 0 8 --modes variant)
-  python scripts/judge/make_judge_cls_data.py
+  python scripts/judge/make_judge_cls_data.py --pools shared --levels 0 8
 fi
 ls -la data/judge_cls/shared/
 
