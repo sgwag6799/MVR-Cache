@@ -1,6 +1,6 @@
 """Claim A on Classification: build the stage 2 stream files and the RL splitter train/val files.
 
-Input: the Classification shared-paragraph data (PREFIX_EXPERIMENT.md 2절), made by
+Input: the Classification shared-paragraph data (BRANCH_NOTES.md의 PREFIX_EXPERIMENT 부분 2절), made by
 scripts/make_cls_splits.py and benchmarks.prefix.make_prefix_data into data/prefix/data.
 
 Output (under <repo>/data/cls_stage2, git-ignored):

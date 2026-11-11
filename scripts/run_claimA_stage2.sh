@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 주장 A 보강 스트림 (PREFIX_EXPERIMENT.md 21.5): A0 + 채우기 → A1 (sleep 0.1) → A1b (sleep 0.1, cap all) 순서로 하나씩 돌린다.
+# 주장 A 보강 스트림 (BRANCH_NOTES.md의 CLAIM_A 부분 「보강 실험과 판정 기준」): A0 + 채우기 → A1 (sleep 0.1) → A1b (sleep 0.1, cap all) 순서로 하나씩 돌린다.
 # 배치마다 결과 폴더를 나누고, autosave가 집계표 · 실행 요약을 mvr-cache/benchmarks/prefix/claimA_stage2/<배치>/ 로 push 한다.
 # Usage (repo root, VSCode 터미널에서. 데이터 · RL 체크포인트 준비 후):
 #   nohup bash scripts/run_claimA_stage2.sh [병렬 수, 기본 5] [시작 배치: fill|sleep01|capall] > data/claimA/run.log 2>&1 < /dev/null &
