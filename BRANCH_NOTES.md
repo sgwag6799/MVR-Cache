@@ -1,4 +1,17 @@
-# 공통 문단 스트레스 테스트 (`prefix-stress-test` 브랜치)
+# `prefix-stress-test` 브랜치 노트
+
+main 대비 이 브랜치에서 추가한 문서를 이 파일 하나로 합쳤다. 위쪽이 이 브랜치에서 쓴 문서, 아래쪽이 부모 브랜치(`main`)에서 물려받은 문서다.
+각 부분의 제목 앞 이름이 원래 파일 이름이고, 절 번호는 원래 문서 그대로다 (코드 주석의 "X 부분 N절"이 이 번호를 가리킨다).
+
+| 부분 | 원래 파일 |
+|---|---|
+| PREFIX_EXPERIMENT | `PREFIX_EXPERIMENT.md` |
+
+---
+
+<!-- 원래 파일: PREFIX_EXPERIMENT.md -->
+
+# PREFIX_EXPERIMENT 부분: 공통 문단 스트레스 테스트 (`prefix-stress-test` 브랜치)
 
 > **답변은 한국어로 해 주세요.** `main`(원저자 코드, `8cfaa0b`)에서 딴 브랜치다. `gpu-production`(규칙 분할 예외 1~6, 로그 A~F)과 `dialect-cache-experiment`와는 별개다.
 > 설계 원문: 노션 "공통 문단 테스트: 조각 가중치가 필요한 조건 찾기". 이 문서는 그 설계를 코드로 옮긴 방법과, 데이터로 확인해 보니 설계와 충돌한 부분을 적는다.
