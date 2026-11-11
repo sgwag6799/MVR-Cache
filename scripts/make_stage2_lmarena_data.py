@@ -1,6 +1,6 @@
 """Experiment 8 / claim A: build the stage 2 stream files and the RL splitter train/val files.
 
-Input: the LmArena prefix data (PREFIX_EXPERIMENT.md), with the merged answer
+Input: the LmArena prefix data (BRANCH_NOTES.md의 PREFIX_EXPERIMENT 부분), with the merged answer
 column `id_set_merged` (scripts/lmarena_merge_duplicate_sets.py).
 
 Output (under <repo>/data/exp8, git-ignored):
