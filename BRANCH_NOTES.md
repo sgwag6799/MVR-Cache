@@ -5,14 +5,14 @@
 
 | 부분 | 내용 |
 |---|---|
-| DECOMP | 이 브랜치: 바닐라 vCache ↔ MVR 파이프라인 차이 분해 (CLS · 점수 범위 · 후보 수) |
+| DECOMP | 이 브랜치: 바닐라 vCache ↔ vCache(MVR) 차이 분해 (CLS · 점수식 · 후보 수, 5반복) |
 | PREFIX_EXPERIMENT | 부모 브랜치 문서 (`PREFIX_EXPERIMENT.md`) |
 
 ---
 
 <!-- 이 브랜치 문서 -->
 
-# DECOMP 부분: 바닐라 vCache ↔ MVR 파이프라인 차이 분해
+# DECOMP 부분: 바닐라 vCache ↔ vCache(MVR) 차이 분해
 
 > 판정자를 쓰지 않는 실험이다. 실행 전 설계 · 판정 기준을 여기에 고정한다. 결과를 보고 기준을 바꾸지 않는다.
 
@@ -20,13 +20,14 @@
 
 | 항목 | 내용 |
 |---|---|
-| 질문 | 같은 vCache 판정 규칙인데 바닐라 vCache(V)와 MVR 파이프라인(B0, 분할 0)의 히트율 · 오류율이 왜 다른가 |
-| 요인 | ① [CLS] 토큰을 임베딩 평균에 넣는가 ② 점수 범위: 코사인 그대로 vs (코사인+1)/2 ③ 후보 수: 1개 vs 10개 재정렬 |
-| 칸 | V · P1 ~ P5 (3절). V → P5가 바닐라 → B0이고, 한 번에 한 요인씩 바꾼다 |
-| 데이터 | Classification test41k(공식 39K 집계) · LmArena test 56,048행(공식 54,048행 집계). SearchQueries는 이번에 뺀다(1회 3~5시간) |
-| 고정 | 순서 1(파일 순서) · 시드 1 · δ 0.01 · cache-on-miss · bge-base-en-v1.5 · sleep 0.02 · 판정자 없음 |
-| 반복 | 이번에는 없음. "차이 큼"(6절) 요인만 순서 2·3 반복과 판정자 조건으로 확장 |
-| 실행 | RunPod. 데이터셋 하나당 Pod 하나, Pod 안에서는 칸을 하나씩 순서대로 |
+| 목적 | 바닐라 vCache는 "기존 논문 대비"의 기준선, vCache(MVR)는 우리 판정자가 올라가는 기반이다(팀 판정자 실행은 vCache(MVR)와 같은 인자에 `--consensus-*`만 붙인다). 둘 사이에 달라지는 요소가 여러 개라, **요소 하나씩 바꿀 때 히트율 · 오류율이 얼마나 변하는지** 잰다 |
+| 요인 | ① [CLS] 토큰: 후보 찾기 · 채점 벡터에 넣는가 ② 점수식: cos 그대로 vs (cos+1)/2 ③ 후보 수: 1개 vs 10개 ④ 코드 경로: 바닐라 코드 vs MVR 코드 |
+| 칸 | V · P1 ~ P5 (3절). V → P5가 바닐라 → vCache(MVR)이고, 한 번에 한 요인씩 바꾼다 |
+| 데이터 | **LmArena 먼저** (test 56,048행, 공식 집계 54,048행). Classification(test41k, 공식 39K)은 LmArena 결과를 보고 정한다. SearchQueries는 뺀다 |
+| 고정 | δ 0.01 · cache-on-miss · bge-base-en-v1.5 · sleep 0.02 · 판정자 없음 · 분할 0 |
+| 반복 | **5회. 반복 k = 순서 k + 시드 k** (팀 규칙, 5절). 6칸 × 5반복 = 30실행 |
+| 비교 | 같은 δ에서 **히트율 차이(주 지표)와 오류율 비를 함께**, 같은 반복끼리 짝지어 평균과 95% 구간 (6절). 모두 이 실험 안의 칸끼리만 비교한다 |
+| 실행 | RunPod. 모든 실행을 같은 GPU 종류에서. Pod 하나에서는 한 번에 한 실행만 |
 
 ## 1. 배경 (기존 기록)
 
@@ -37,36 +38,38 @@
 | 판정자 실험 H (LmArena · L4 · 순서 1) | 같은 δ 1%: V 18.97% / 0.113% vs B0 18.24% / 0.157%. **같은 실제 오류율**에서는 B0가 7 ~ 9%p 낮다 |
 | 실험 H의 원인 후보 | 풀링 · 점수 척도 · 후보 검색 경로 (미측정) |
 
-LmArena는 같은 δ에서 히트율보다 **오류율** 차이로 드러난다(0.113 vs 0.157%). 그래서 판정에 오류율 비를 함께 쓴다(6절).
+데이터셋마다 차이의 방향이 반대다. LmArena는 같은 δ에서 히트율보다 **오류율** 차이로 드러난다(0.113 vs 0.157%). 그래서 판정에 오류율 비를 함께 쓴다(6절).
 
 ## 2. 코드 확인
 
-| | 바닐라 (`benchmarks/eval_sembenchmark_verified.py` → `verified.py`) | MVR 파이프라인 (`eval_sembenchmark_verified_splitter.py` → `verified_splitter.py`) |
+| | 바닐라 (`eval_sembenchmark_verified.py` → `verified.py`) | vCache(MVR) (`eval_sembenchmark_verified_splitter.py` → `verified_splitter.py`) |
 |---|---|---|
-| 후보 | HNSW 최근접 1개 (`get_knn(emb, k=1)`) | HNSW로 k개 → 조각 SMaxSim으로 재정렬해 1등 |
-| 임베딩 | `EmbeddingModel.get_embedding`: [CLS] · [SEP] 포함 전체 토큰 평균 | 후보 검색은 같은 벡터, 점수는 조각 벡터(`_segment_embeds_from_pointers`: [CLS] 제외) |
-| 점수 | 1 − HNSW 코사인 거리 = 코사인 그대로 | 대칭 SMaxSim → (x+1)/2 |
+| 후보 찾기 | HNSW 최근접 1개, **CLS 포함** 전체 평균 벡터 | `multivector_top_k`: 조각 벡터(**CLS 제외**)로 HNSW에서 k개 |
+| 채점 | 1 − HNSW 코사인 거리 = cos 그대로 | 조각 벡터(CLS 제외)의 대칭 SMaxSim → (x+1)/2, 가장 높은 후보가 1등 |
 | 판정 | `_Algorithm` (6개 미만 EXPLORE, 항목별 로지스틱, τ) | 같은 `_Algorithm`을 가져다 씀 |
 
-- 이 브랜치의 바닐라 경로는 main과 판정 코드가 같다(`verified.py` 변경 없음). 차이는 vllm 없이 import, `--seed`, `--filter-true-column`뿐이다.
-- 점수 범위만 바꿔도 판정이 달라질 수 있는 곳: 로지스틱은 정규화가 없어 이론상 척도와 무관하지만 ① 완전 분리일 때 고정 분산값(`variance_map`) ② `round(s, 3)` ③ t_hat을 [0, 1]로 자르기는 척도에 따라 달라진다 *(추정)*.
+- 팀 vCache(MVR) 실행 인자 (실험 H `LB0d01_o2.cmd`, Drive `mvr_eval/pair_judge/judge_h/runs/`): `--candidate-selection multivector_top_k --candidate-k 10 --mix-fullcos --include-full-embedding --splitter-mode rule --splitter-max-segments 0`
+- 이 실험의 P5는 `--mix-fullcos` · `--include-full-embedding`을 넣지 않는다. 분할 0이면 두 옵션이 더하는 것도 같은 "CLS 제외 전체 평균"이라 점수가 같다 *(코드 읽고 추론)*. 분할기도 팀은 `rule`, 여기는 `prefix_rule`(둘 다 분할 0이면 조각 1개). 그래서 팀 기록 수치와 직접 비교하지 않고 **이 실험 안의 칸끼리만** 비교한다
+- 찾기와 채점이 같은 벡터면, 후보 10개를 다시 채점해도 1등이 HNSW 1등과 거의 같다. 그래서 vCache(MVR)에서는 후보 수 효과가 작을 것으로 예상한다 *(추정)*. 기록 1의 B(+0.8%p)는 후보를 CLS 포함 벡터로 찾은 경우라 다를 수 있다
+- 점수식만 바꿔도 판정이 달라질 수 있는 곳: 로지스틱은 정규화가 없어 이론상 척도와 무관하지만 ① 완전 분리일 때 고정 분산값(`variance_map`) ② `round(s, 3)` ③ t_hat을 [0, 1]로 자르기는 척도에 따라 달라진다 *(추정)*
 
 ## 3. 칸 설계
 
-모든 P칸은 분할 0(`--rule-max-cuts 0 --rule-cap-scope all` → 조각 1개 = 문장 전체), `--candidate-selection top_k`.
+모든 P칸은 분할 0(`--rule-max-cuts 0 --rule-cap-scope all` → 조각 1개 = 문장 전체), `--use-cached-candidate-segments`.
 
-| 칸 | CLS | 점수 범위 | 후보 | 의미 |
-|---|---|---|---|---|
-| V | 포함 | 코사인 | 1 | 바닐라 vCache (main 판정 코드) |
-| P1 | 포함 | 코사인 | 1 | V를 MVR 경로로 재현 → **코드 경로 확인** (V와 같아야 함) |
-| P2 | 포함 | (x+1)/2 | 1 | P2 − P1 = 점수 범위 효과 (CLS 포함일 때) |
-| P3 | 제외 | 코사인 | 1 | P3 − P1 = CLS 효과 (코사인일 때) |
-| P4 | 제외 | (x+1)/2 | 1 | = 기록 1의 A′. P4 − P3 · P4 − P2로 두 효과의 반대쪽 칸 |
-| P5 | 제외 | (x+1)/2 | 10 | = B0 재현. P5 − P4 = 후보 수 효과 |
+| 칸 | CLS (찾기 · 채점) | 점수식 | 후보 | 후보 찾기 | 의미 |
+|---|---|---|---|---|---|
+| V | 포함 | cos | 1 | HNSW (바닐라 코드) | 바닐라 vCache (기존 논문 기준선) |
+| P1 | 포함 | cos | 1 | `top_k` | V를 MVR 코드로 재현 → **코드 경로 확인** (V와 같아야 함) |
+| P2 | 포함 | (cos+1)/2 | 1 | `top_k` | P2 − P1 = 점수식 효과 (CLS 포함일 때) |
+| P3 | 제외 | cos | 1 | `multivector_top_k` | P3 − P1 = CLS 효과 (cos일 때) |
+| P4 | 제외 | (cos+1)/2 | 1 | `multivector_top_k` | P4 − P3 = 점수식 효과 (CLS 제외일 때), P4 − P2 = CLS 효과 ((cos+1)/2일 때) |
+| P5 | 제외 | (cos+1)/2 | 10 | `multivector_top_k` | P5 − P4 = 후보 수 효과. **= vCache(MVR)** |
 
-- 2×2(P1 ~ P4)에서 CLS 주효과 = ((P3 − P1) + (P4 − P2)) / 2, 점수 범위 주효과 = ((P2 − P1) + (P4 − P3)) / 2, 상호작용 = (P4 − P3) − (P2 − P1)
-- 후보 검색 벡터는 모든 칸에서 [CLS] 포함 벡터(HNSW)다. 후보 1개 칸에서 CLS를 빼면 "1등은 CLS 포함 벡터로 찾고, 그 점수만 CLS 제외 벡터로 낸다"는 뜻이다(기록 1의 A′와 같은 정의). CLS 포함 + 후보 10은 재정렬해도 HNSW 1등과 거의 같아 칸을 두지 않는다.
-- V와 P5를 같이 돌리는 이유: RunPod GPU가 기존 기록(L4)과 다를 수 있어, 비교는 **이 실험 안의 칸끼리만** 한다.
+- 2×2(P1 ~ P4)에서 CLS 주효과 = ((P3 − P1) + (P4 − P2)) / 2, 점수식 주효과 = ((P2 − P1) + (P4 − P3)) / 2, 상호작용 = (P4 − P3) − (P2 − P1). 주간 계획 6절의 칸 ① = P3, 칸 ② = P2, 칸 ③ = P1
+- CLS 포함 칸(P1 · P2)은 `--segment-include-cls`로 조각 벡터에 [CLS]를 넣는다. 분할 0이면 조각 벡터 = 바닐라 임베딩이라 `top_k`(HNSW, CLS 포함)로 찾는 것과 같은 벡터다
+- CLS 제외 칸(P3 ~ P5)은 vCache(MVR)처럼 **찾기와 채점 모두** CLS 제외 벡터를 쓴다. 이전 설계(후보는 CLS 포함 벡터로 찾고 채점만 CLS 제외)는 두 파이프라인 어디에도 없는 형태라 버렸다
+- V와 P5를 같이 돌리는 이유: GPU · 분할기 · 옵션이 기존 기록과 달라, 비교는 **이 실험 안의 칸끼리만** 한다
 
 ## 4. 코드 변경 (이 브랜치)
 
@@ -75,51 +78,63 @@ LmArena는 같은 δ에서 히트율보다 **오류율** 차이로 드러난다(
 | `vcache/vcache_core/splitter/PrefixRuleSplitter.py` | `include_cls`: 첫 조각 평균을 [CLS]부터. 분할 0이면 조각 벡터 = 바닐라 임베딩(`pooled_knn`) | False (원본과 같음) |
 | `vcache/vcache_policy/strategies/verified_splitter.py` | `score_scale`: `unit` = (x+1)/2, `raw` = 코사인 그대로(−1 ~ 1). `mix_fullcos`와 같이 쓰면 오류. 후보 1등 초기값을 −1 → −∞(raw에서도 안전) | `unit` (원본과 같음) |
 | `benchmarks/eval_sembenchmark_verified_splitter.py` | 인자 `--segment-include-cls` · `--score-scale {unit,raw}` | 원본과 같음 |
-| `scripts/decomp/run_decomp.sh` | 6칸 실행기. 칸마다 `<칸>.json`(per_sample) · `<칸>.log` · `<칸>.meta.json`(명령 · 커밋 · GPU · 버전 · 데이터 지문). 끝난 칸은 건너뜀 | |
-| `scripts/decomp/report_decomp.py` | 공식 집계(앞 2,000행 제외), 오류율 95% 상한, 요인 효과, 6절 판정, P1 ↔ V 요청별 일치율. `report.md` · `report.csv` | |
-| `scripts/decomp/selftest.py` | 본 실행 전 점검: 풀링 · 점수 범위 단위 시험, `--with-model`이면 실제 BGE로 "CLS 포함 분할 0 벡터 = 바닐라 벡터" 확인 | |
+| `scripts/decomp/run_decomp.sh` | 6칸 실행기. `REP=k`면 순서 k 파일을 만들어 쓰고 `--seed k`. 칸마다 `r<k>/<칸>.json`(per_sample) · `.log` · `.meta.json`(명령 · 반복 · 시드 · 커밋 · GPU · 버전 · 데이터 지문). 끝난 칸은 건너뜀 | |
+| `scripts/decomp/make_order.py` | 순서 k 파일 만들기: 순서 1 파일을 `np.random.default_rng(1000 + k).permutation(n)`으로 섞음. id 순서 지문 출력 | |
+| `scripts/decomp/report_decomp.py` | 반복별 공식 집계(앞 2,000행 제외), 칸별 평균 ± 95% 구간, 요인 효과(짝지은 차이), 6절 판정, 반복별 P1 ↔ V 일치율. `report.md` · `report.csv` | |
+| `scripts/decomp/selftest.py` | 본 실행 전 점검: 풀링 · 점수식 단위 시험, `--with-model`이면 실제 BGE로 "CLS 포함 분할 0 벡터 = 바닐라 벡터" 확인 | |
 
 ## 5. 실행 (RunPod)
 
-1. Pod: **두 대 모두 같은 GPU 종류 · 같은 이미지**. Pod 1 = Classification, Pod 2 = LmArena. 한 Pod에 다른 실험을 같이 올리지 않는다(관측 갱신이 백그라운드 스레드라 느려지면 판정이 달라질 수 있다 — 평가 코드의 `--sleep` 주석).
-2. 설치 (저장소 루트):
+1. Pod: **모든 Pod 같은 GPU 종류 · 같은 이미지**. 반복마다 Pod를 나눠도 된다. 한 Pod에서는 한 번에 한 실행만 돌린다(관측 갱신이 백그라운드 스레드라 느려지면 판정이 달라질 수 있다 — 평가 코드의 `--sleep` 주석).
+2. 설치:
    ```bash
-   git clone -b cls-scale-decomp https://github.com/sgwag6799/MVR-Cache.git && cd MVR-Cache/mvr-cache
+   cd /workspace && git clone -b cls-scale-decomp https://github.com/sgwag6799/MVR-Cache.git
+   cd MVR-Cache/mvr-cache
    pip install -q tokenizers transformers pyarrow hnswlib statsmodels rl4co tensordict pandas tqdm scikit-learn
    python ../scripts/decomp/selftest.py --with-model
+   cd ..   # 이후 명령은 저장소 루트에서
    ```
-3. 데이터: GitHub에 올리지 않는다. Drive `mvr_splits/`에서 Pod로 복사한다.
-   - Classification: `cls_seed42_nodedup/test41k.parquet` (41,000행, 기존 실험과 같은 파일)
-   - LmArena: `lmarena_seed42/lmarena_test_seed42_repro.parquet` (56,048행, 지문 `1f38e5aad950`)
-4. 실행 (tmux 안에서):
+3. 데이터: GitHub에 올리지 않는다. Drive `캡스톤디자인(1)/colab 코드 및 자료/mvr_splits/`에서 **순서 1 파일만** Pod로 복사한다. 순서 2 ~ 5는 실행기가 만든다.
+   - LmArena: `lmarena_seed42/lmarena_test_seed42_repro.parquet` (56,048행)
+   - Classification: `cls_seed42_nodedup/test41k.parquet` (41,000행)
+4. 순서 = 팀 규칙(실험 H `PREREG_H_lm_stage2_o2.json`): 순서 k = 순서 1 파일을 `np.random.default_rng(1000 + k).permutation(n)`으로 섞음. `make_order.py`로 만든 순서 2 · 3이 Drive `orders/lmarena_test_o2 · o3.parquet`과 행 순서가 같음을 확인했다(2026-11-12). LmArena id 순서 지문: 순서 1 `1f38e5aad950`, 순서 2 `e895e59995c3`, 순서 3 `0fb26e60988a`
+5. 실행 (tmux 안에서, 저장소 루트):
    ```bash
-   DATA=/workspace/data/test41k.parquet DS=cls OUT=/workspace/decomp/cls_o1 bash scripts/decomp/run_decomp.sh
-   DATA=/workspace/data/lmarena_test_seed42_repro.parquet DS=lm OUT=/workspace/decomp/lm_o1 bash scripts/decomp/run_decomp.sh
-   python scripts/decomp/report_decomp.py /workspace/decomp/cls_o1
+   for k in 1 2 3 4 5; do
+     DATA=/workspace/data/lmarena_test_seed42_repro.parquet DS=lm OUT=/workspace/decomp/lm REP=$k bash scripts/decomp/run_decomp.sh
+   done
+   python scripts/decomp/report_decomp.py /workspace/decomp/lm
    ```
-5. 시간 *(추정, L4 기준)*: Classification 칸당 약 30 ~ 40분 × 6 ≈ 3.5시간, LmArena 칸당 약 55분 × 6 ≈ 5.5시간. 두 Pod 병렬.
-6. 끝나면 `OUT` 폴더(json · log · meta · report)를 Drive에 올린다.
+   Pod 여러 대면 Pod마다 `REP`를 하나씩 맡긴다. 결과 폴더(`r<k>/`)를 한 `OUT` 아래로 모아서 집계한다.
+6. 시간 *(추정, L4 기준)*: 팀 기록에서 LmArena 바닐라 40.6분, vCache(MVR) 55분. 반복 하나 = 6칸 약 5시간, 5반복 약 25시간. Pod 5대면 약 5시간
+7. 먼저 반복 1을 끝내고 확인한다: P1 ↔ V 코드 경로 통과(6절), P5가 팀 B0 기록(순서 1 · δ 1% · L4: 18.24% / 0.157%)과 크게 다르지 않은지. 크게 다르면 원인을 먼저 본다(분할기 · 옵션 · GPU 차이)
+8. 끝나면 `OUT` 폴더(json · log · meta · report)를 Drive에 올린다.
 
-## 6. 판정 기준 (실행 전 기록)
+## 6. 비교 방법과 판정 기준 (실행 전 기록)
+
+- **주 지표는 같은 δ(1%)에서의 히트율 차이**다. 요인을 바꾸면 같은 δ에서도 실제 오류율이 달라질 수 있어, **오류율 비(뒤 칸 ÷ 앞 칸)를 함께** 본다. 히트율이 올라도 오류율이 같이 오르면 순수한 이득이 아니다
+- 같은 반복(같은 순서 · 시드)끼리 짝지어 차이를 내고, 5반복의 평균과 95% 구간(t 분포, 자유도 4)을 보고한다
+- 같은 실제 오류율에서의 비교(δ 곡선)는 이번에 하지 않는다(7절)
 
 | 확인 | 기준 | 결과에 따른 처리 |
 |---|---|---|
-| 유효성 | 모든 칸의 데이터 지문 · GPU · 커밋이 같음 | 다르면 비교 무효, 다시 돌림 |
-| 코드 경로 (P1 ↔ V) | 요청별 히트 일치율 ≥ 99% 이고 \|Δ히트율\| < 0.4%p | 통과면 V와 P1을 같은 출발점으로 본다. 미통과면 2×2는 P1 기준으로만 읽고, 경로 차이(HNSW 점수 vs torch 코사인의 반올림 등)를 먼저 확인한다 |
-| 요인별 "차이 큼" | \|Δ히트율\| ≥ 1.0%p (재실행 변동 약 0.4%p의 2.5배) **또는** 오류율 비가 0.8 ~ 1.25 밖 | "차이 큼"인 요인만 7절로 확장. 아니면 "1회 기준 작음"으로 보고 해석하지 않는다 |
-| 보고 | 칸별 히트율 · 오류율(95% 상한), 요인 효과, 2×2 주효과 · 상호작용, P1 ↔ V 일치율 | 판정에는 히트율 · 오류율 비만 쓴다 |
+| 유효성 | 한 반복 안의 칸은 데이터 지문이 같고, 모든 실행의 GPU · 커밋이 같음 | 다르면 비교 무효, 다시 돌림 |
+| 코드 경로 (P1 ↔ V) | 반복마다 요청별 히트 일치율 ≥ 99% 이고 \|Δ히트율\| < 0.4%p | 통과면 V와 P1을 같은 출발점으로 본다. 미통과면 2×2는 P1 기준으로만 읽고, 경로 차이(HNSW 점수 vs torch 코사인의 반올림 등)를 먼저 확인한다 |
+| 요인별 "차이 큼" | 반복 평균 \|Δ히트율\| ≥ 1.0%p (재실행 변동 약 0.4%p의 2.5배) **또는** 오류율 비가 0.8 ~ 1.25 밖 | "차이 큼"인 요인만 7절로 확장 |
+| 방향 | 짝지은 차이의 95% 구간이 0을 포함하지 않음 | 0을 포함하면 방향은 확정하지 않는다 |
+| 보고 | 칸별 히트율 · 오류율(평균 ± 95% 구간, 반복별 95% 상한), 요인 효과, 2×2 주효과 · 상호작용, 반복별 P1 ↔ V 일치율 | 판정에는 히트율 · 오류율 비만 쓴다 |
 
 ## 7. 확장 계획 (6절 결과에 따라)
 
-- "차이 큼" 요인이 있는 데이터셋: 그 요인의 두 칸을 순서 2·3(기존 실험 H와 같은 `default_rng(1000 + k)` 섞기)으로 반복
-- 같은 요인을 판정자 조건(대체형)에서도 확인할지는 반복 결과를 보고 정한다
-- LmArena처럼 오류율 차이가 큰 경우, 같은 실제 오류율 비교가 필요하면 해당 칸의 δ 곡선 점(δ 0.02 · 0.03)을 추가한다
+- "차이 큼" 요인은 팀원의 판정자 코드가 정리되면 **판정자 조건에서도** 같은 요인을 바꿔 본다. 점수식은 판정자(표준화한 로지스틱)에 영향이 작을 것으로 추론하므로 CLS를 우선한다(주간 계획 6절)
+- 오류율 비가 크게 벗어나면, 같은 실제 오류율 비교를 위해 해당 칸들에 δ 점(0.02 · 0.03)을 추가한다
+- Classification은 LmArena 결과를 보고 같은 설계(6칸 × 5반복)로 돌릴지 정한다
 
 ## 8. 한계 · 실행 전 확인할 것
 
-- **B0 인자 확인**: 팀 B0 기록(`judge_a/runs/B0_s1` 의 meta)의 후보 방식이 `top_k`인지 `multivector_top_k`인지, `--include-full-embedding` · `--mix-fullcos` 여부를 확인한다. 분할 0이면 조각 벡터 = 전체 벡터라 앞의 두 옵션은 점수가 같지만, `multivector_top_k`면 후보를 **CLS 제외 벡터**로 찾으므로 P5와 다르다 → 그 경우 칸 P6(`--candidate-selection multivector_top_k --candidate-k 10`)을 추가한다
-- 순서 1 · 1회 결과다. 1%p보다 작은 차이는 해석하지 않는다
+- P5는 팀 vCache(MVR)와 옵션(`--mix-fullcos` · `--include-full-embedding`) · 분할기(`rule` vs `prefix_rule`)가 다르다. 분할 0에서는 같다고 추론하지만 실행으로 확인하지 않았다(5절 7단계로 확인)
 - δ 하나(0.01)라 같은 실제 오류율 비교는 하지 않는다. 오류율 비로 보완한다
+- 오류 수가 적어(LmArena δ 1%에서 실행당 약 80건) 오류율 비는 반복 하나로는 흔들린다. 5반복을 합친 비율로 판정한다
 - GPU가 기존 기록(L4)과 다르면 기존 V · B0 수치와 직접 비교하지 않는다
 - SearchQueries는 이번 범위 밖이다
 
