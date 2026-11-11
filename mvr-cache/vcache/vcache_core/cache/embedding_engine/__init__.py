@@ -5,9 +5,12 @@ from vcache.vcache_core.cache.embedding_engine.strategies.bge import (
 from vcache.vcache_core.cache.embedding_engine.strategies.benchmark import (
     BenchmarkEmbeddingEngine,
 )
-from vcache.vcache_core.cache.embedding_engine.strategies.lang_chain import (
-    LangChainEmbeddingEngine,
-)
+try:  # [수정: cls-scale-decomp] langchain은 선택 의존성 (팀 RunPod repo와 같은 처리)
+    from vcache.vcache_core.cache.embedding_engine.strategies.lang_chain import (
+        LangChainEmbeddingEngine,
+    )
+except ImportError:
+    LangChainEmbeddingEngine = None
 from vcache.vcache_core.cache.embedding_engine.strategies.open_ai import (
     OpenAIEmbeddingEngine,
 )
