@@ -56,10 +56,10 @@ for c in "${CELLS[@]}"; do
   if [ -s "$out_json" ]; then echo "[skip] r$REP $c (done)"; continue; fi
   a="$(cell_args "$c")"
   if [ "$a" = "VANILLA" ]; then
-    cmd=(python benchmarks/eval_sembenchmark_verified.py "${COMMON[@]}" --device "$DEVICE" --output-json "$out_json")
+    cmd=(python ../scripts/decomp/json_safe_run.py benchmarks/eval_sembenchmark_verified.py "${COMMON[@]}" --device "$DEVICE" --output-json "$out_json")
   else
     # shellcheck disable=SC2206
-    cmd=(python benchmarks/eval_sembenchmark_verified_splitter.py "${COMMON[@]}" "${SPLIT[@]}" $a --output-json "$out_json")
+    cmd=(python ../scripts/decomp/json_safe_run.py benchmarks/eval_sembenchmark_verified_splitter.py "${COMMON[@]}" "${SPLIT[@]}" $a --output-json "$out_json")
   fi
   python - "$RUN_OUT/$c.meta.json" "$DATA" "$c" "$REP" "$SEED" "${cmd[@]}" <<'PY'
 import hashlib, json, subprocess, sys, datetime
