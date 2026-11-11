@@ -252,7 +252,7 @@ if not os.path.exists(PREREG_P):
         p_low, rule = float(P_LOW_OVERRIDE), '팀원과 정한 값 (P_LOW_OVERRIDE)'
     assert p_low is not None and p_low < JMED_PSTAR, f'p_low 를 정하지 못했다 ({p_low})'
     pre = {'작성': datetime.datetime.now().isoformat(timespec='seconds'), 'GPU': GPU_NAME,
-           '설계': f'{BRANCH}@{TOOLS_COMMIT} JUDGE_CAP.md', '저장소': REPO_COMMIT, '패치': PATCH_SHAS,
+           '설계': f'{BRANCH}@{TOOLS_COMMIT} BRANCH_NOTES.md JUDGE_CAP 부분', '저장소': REPO_COMMIT, '패치': PATCH_SHAS,
            'Jmed p*': JMED_PSTAR, '판정자 모델': JMED_MODEL, '판정자 모델 sha': sha12(JMED_MODEL),
            'p_low': p_low, 'p_low 규칙': rule, 'p_low 사전 점검 출력': out_p,
            '판정 기준': {'① 전제': '한도 없음(Jlow · Jover) 추가 오답 > 0.35% (공식 39K)',

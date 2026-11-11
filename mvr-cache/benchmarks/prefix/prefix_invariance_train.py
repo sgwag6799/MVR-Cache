@@ -14,7 +14,7 @@ the rules of prefix_split.py, so the original part has the same segments in both
 --control trains with no shared sentences at all (keep loss only, same steps), to separate the
 effect of "more training" from the invariance objective.
 
-Fixed before the run (PREFIX_EXPERIMENT.md 19): train split only; the epoch is picked on the val
+Fixed before the run (prefix-exp7-invariant-encoder 브랜치 BRANCH_NOTES.md의 PREFIX_EXPERIMENT 부분 19절): train split only; the epoch is picked on the val
 split by the same label-free losses (fixed augmentation per row); test and the evaluation pool
 prefix_pool.json are never used here. The best epoch's LoRA is merged into the base weights and
 saved as a plain transformers model for --model in prefix_offline.py / prefix_contamination.py.
