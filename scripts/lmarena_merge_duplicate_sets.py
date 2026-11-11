@@ -1,4 +1,4 @@
-"""Experiment 2 sensitivity (PREFIX_EXPERIMENT.md 13.3): merge ID_Sets that share an identical prompt.
+"""Experiment 2 sensitivity (BRANCH_NOTES.md의 PREFIX_EXPERIMENT 부분 13.3절): merge ID_Sets that share an identical prompt.
 
 SemBenchmarkLmArena has 186 prompts that appear word for word in more than one ID_Set. Such pairs
 score 1.0 but count as wrong answers, which is label noise. This script joins those sets with a
