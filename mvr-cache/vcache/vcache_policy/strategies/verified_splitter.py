@@ -207,8 +207,15 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         mix_fullcos: bool = False,
         timing_collector=None,
         timing_cuda_sync: bool = False,
+        score_scale: str = "unit",
     ):
         self.bayesian = _Algorithm(delta=delta)
+        # [추가: cls-scale-decomp] vCache에 넘기는 점수 척도. "unit" = (x+1)/2 (원본), "raw" = 코사인 그대로(바닐라 vCache와 같은 척도)
+        if score_scale not in ("unit", "raw"):
+            raise ValueError(f"score_scale must be 'unit' or 'raw', got {score_scale!r}")
+        if score_scale == "raw" and bool(mix_fullcos):
+            raise ValueError("score_scale='raw' is not supported together with mix_fullcos")
+        self.score_scale = score_scale
         self.similarity_evaluator: Optional[SimilarityEvaluator] = None
         self.inference_engine: Optional[InferenceEngine] = None
         self.cache: Optional[Cache] = None
@@ -283,15 +290,17 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
     #   없으면(원래 RL 분할기) 원본과 똑같이 균등 가중치.
     def _score_tensors(self, query_tensor, corpus_tensor) -> float:
         weights_fn = getattr(self.splitter, "segment_weights", None)
+        scale = getattr(self, "score_scale", "unit")
         if weights_fn is None:
-            return self._maxsim_from_tensors(query_tensor, corpus_tensor)
+            return self._maxsim_from_tensors(query_tensor, corpus_tensor, scale=scale)
         return self._maxsim_from_tensors(
             query_tensor, corpus_tensor,
             query_weights=weights_fn(query_tensor), corpus_weights=weights_fn(corpus_tensor),
+            scale=scale,
         )
 
     @staticmethod
-    def _maxsim_from_tensors(query_tensor, corpus_tensor, query_weights=None, corpus_weights=None) -> float:
+    def _maxsim_from_tensors(query_tensor, corpus_tensor, query_weights=None, corpus_weights=None, scale: str = "unit") -> float:
         """
         Compute symmetric MaxSim similarity and return it in **[0, 1]** given:
           - query_tensor:  [S_q, H] (segment embeddings)
@@ -332,6 +341,9 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
         # Weighted mix between row/col (uniform by default).
         mix = torch.softmax(torch.tensor([0.0, 0.0], device=dev, dtype=torch.float32), dim=0)
         raw = mix[0] * row_score + mix[1] * col_score
+        # [추가: cls-scale-decomp] scale="raw"면 코사인 그대로 돌려준다 (바닐라 vCache의 HNSW 점수 1 − 거리와 같은 척도)
+        if scale == "raw":
+            return float(raw.clamp(-1.0, 1.0).item())
         # Map cosine-like similarity from [-1, 1] to [0, 1] to match the policy/Bayesian assumptions.
         s01 = ((raw + 1.0) * 0.5).clamp(0.0, 1.0)
         return float(s01.item())
@@ -544,7 +556,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
             return None, None
 
         best_meta: Optional[EmbeddingMetadataObj] = None
-        best_s: float = -1.0
+        best_s: float = float("-inf")  # [cls-scale-decomp] raw 척도(코사인 −1~1)에서도 안전하게
 
         for meta in candidates:
             cached_prompt = getattr(meta, "prompt", "") or ""
@@ -676,7 +688,7 @@ class VerifiedSplitterDecisionPolicy(VCachePolicy):
                 query_tensor = None
 
         best_meta: Optional[EmbeddingMetadataObj] = None
-        best_s: float = -1.0
+        best_s: float = float("-inf")  # [cls-scale-decomp] raw 척도(코사인 −1~1)에서도 안전하게
 
         for meta in candidates:
             cached_prompt = getattr(meta, "prompt", "") or ""

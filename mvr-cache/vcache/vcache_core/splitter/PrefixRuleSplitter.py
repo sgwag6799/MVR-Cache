@@ -40,6 +40,7 @@ class PrefixRuleSplitter(MaxSimSplitter):
         cap_scope: str = "original",
         pool_path: Optional[str] = None,
         head_path: Optional[str] = None,
+        include_cls: bool = False,
     ):
         # MaxSimSplitter.__init__은 RL 체크포인트를 불러오므로 일부러 부르지 않는다
         if embedding_model is None:
@@ -47,6 +48,9 @@ class PrefixRuleSplitter(MaxSimSplitter):
         self.device = torch.device(device) if not isinstance(device, torch.device) else device
         self.max_cuts = max_cuts
         self.cap_scope = cap_scope
+        # [추가: cls-scale-decomp] True면 첫 조각 평균에 [CLS](0번 토큰)를 넣는다.
+        #   분할 0(조각 1개)이면 조각 벡터 = CLS 포함 전체 평균 = 바닐라 vCache 임베딩(pooled_knn)과 같다.
+        self.include_cls = bool(include_cls)
         self.overlap_tokens = 0
         self.include_full_embedding = False
         self.embedding_model = embedding_model
@@ -79,9 +83,20 @@ class PrefixRuleSplitter(MaxSimSplitter):
         pend = ps.prefix_token_end(enc["offsets"][:length], n_chars)
         return ps.cut_points(tokens, length, max_cuts=self.max_cuts, cap_scope=self.cap_scope, prefix_end=pend)
 
+    @staticmethod
+    def _first_segment_with_cls(token_emb: torch.Tensor, length: int, cuts: list) -> torch.Tensor:
+        """[cls-scale-decomp] 첫 조각을 [CLS]부터 평균한 벡터. 경계 규칙은 _segment_embeds_from_pointers와 같다."""
+        valid = sorted({int(p) for p in cuts if 0 <= int(p) < length})
+        end = (valid[0] + 1) if valid else length
+        return token_emb[0:end, :].mean(dim=0).to(dtype=torch.float32)
+
     def split_text_return_maxsim_tensor_from_encoded(self, enc: dict):
         length = int(enc["length"])
-        sent, _full = self._segment_embeds_from_pointers(enc["token_emb"], length, self.cut_points(enc))
+        cuts = self.cut_points(enc)
+        sent, _full = self._segment_embeds_from_pointers(enc["token_emb"], length, cuts)
+        if self.include_cls and length > 1:
+            sent = sent.clone()
+            sent[0] = self._first_segment_with_cls(enc["token_emb"], length, cuts)
         out = sent.to(dtype=torch.float32)
         if self.head is not None:
             with torch.no_grad():

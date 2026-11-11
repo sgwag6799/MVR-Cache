@@ -275,6 +275,11 @@ def main() -> None:
                         help="prefix_rule: count the cap inside the original prompt only (original) or from the start (all).")
     parser.add_argument("--prefix-pool", default=None,
                         help="prefix_rule: prefix_pool.json, used to find where the shared prefix ends (cap_scope original).")
+    # [추가: cls-scale-decomp] 바닐라 vCache ↔ MVR 파이프라인 차이 분해용 두 요인
+    parser.add_argument("--segment-include-cls", action="store_true",
+                        help="prefix_rule only: include [CLS] in the first segment mean (split 0 => same vector as vanilla vCache).")
+    parser.add_argument("--score-scale", choices=["unit", "raw"], default="unit",
+                        help="unit = (cos+1)/2 (original MVR), raw = cosine as is (vanilla vCache scale).")
     parser.add_argument("--segment-head", default=None,
                         help="prefix_rule: learned weight head from benchmarks/prefix/prefix_offline.py (M3). Omit for uniform (M2).")
     parser.add_argument(
@@ -535,8 +540,11 @@ def main() -> None:
             cap_scope=args.rule_cap_scope,
             pool_path=args.prefix_pool,
             head_path=args.segment_head,
+            include_cls=bool(args.segment_include_cls),
         )
     else:
+        if args.segment_include_cls:
+            parser.error("--segment-include-cls is only supported with --splitter-mode prefix_rule")
         if not args.splitter_checkpoint:
             parser.error("--splitter-checkpoint is required for --splitter-mode rl")
         splitter = MaxSimSplitter(
@@ -777,6 +785,7 @@ def main() -> None:
             mix_fullcos=bool(args.mix_fullcos),
             timing_collector=timing,
             timing_cuda_sync=bool(args.timing_cuda_sync),
+            score_scale=str(args.score_scale),
         )
         vcache = VCache(config=config, policy=policy)
 
