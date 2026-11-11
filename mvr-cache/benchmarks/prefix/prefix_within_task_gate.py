@@ -19,7 +19,7 @@ Gate (same thresholds as the original): at some L >= 4, R - M2 >= 0.03 and
 task, gives 95% intervals for the drop, M3 - M2, M4 - M2 and the recovery.
 
 The macro gate was fixed after the per-task numbers of the pool x label runs had been looked
-at (see PREFIX_EXPERIMENT.md 11, 12), so it is exploratory, not a replacement for section 8.
+at (see BRANCH_NOTES.md의 PREFIX_EXPERIMENT 부분 11, 12절), so it is exploratory, not a replacement for section 8.
 
 Example:
   python -m benchmarks.prefix.prefix_within_task_gate --out results_within_task \
